@@ -122,6 +122,11 @@ object NativeBridge {
             }
             "getForegroundPackage" ->
                 result.success(ForegroundDetector.currentPackage(context))
+            "getBiometricStatus" -> result.success(BiometricAuth.status(context))
+            "setBiometricEnabled" -> {
+                LockPrefs.setBiometricEnabled(context, arguments == true)
+                result.success(null)
+            }
             else -> result.notImplemented()
         }
     }

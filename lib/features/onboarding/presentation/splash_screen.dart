@@ -34,6 +34,11 @@ class _SplashScreenState extends State<SplashScreen> {
 
   void _advance() {
     if (!mounted) return;
+    // Only advance while this splash screen is still the visible route. If
+    // anything else has been pushed on top (e.g. the native lock route),
+    // navigating now would replace that route and hijack the navigator.
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return;
     final c = widget.controller;
     final needsSetup = !c.onboardingDone || !c.hasPin;
     Navigator.of(context).pushReplacementNamed(needsSetup ? '/onboarding' : '/home');

@@ -24,6 +24,7 @@ Future<void> main() async {
   );
   await controller.native.setLockEnabled(controller.lockEnabled);
   await controller.native.setRelockTimeout(controller.relockTimeoutSeconds);
+  await controller.native.setBiometricEnabled(controller.biometricEnabled);
 
   runApp(BlueLockApp(controller: controller));
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../features/app_lock/services/biometric_status.dart';
 import '../../features/installed_apps/models/installed_app.dart';
 import '../../features/installed_apps/services/apps_repository.dart';
 import '../../features/authentication/services/pin_service.dart';
@@ -59,8 +60,14 @@ class AppController extends ChangeNotifier {
   bool usageAccess = false;
   bool overlayPermission = false;
 
+  // Biometric unlock: device capability (available/enrolled) + user pref.
+  BiometricStatus biometric = BiometricStatus.unavailable;
+
   bool get lockEnabled => _lockEnabled;
   bool get hasPin => pinService.hasPinSync;
+
+  bool get biometricEnabled => biometric.enabled;
+  bool get biometricUsable => biometric.canUse;
 
   bool get permissionsGranted => usageAccess;
 
@@ -70,8 +77,31 @@ class AppController extends ChangeNotifier {
 
   Future<void> init() async {
     onboardingDone = storage.onboardingDone;
+    biometric = BiometricStatus(
+      available: false,
+      enrolled: false,
+      enabled: storage.biometricEnabled,
+    );
     await pinService.loadPinState();
     await refreshPermissions();
+    await refreshBiometrics();
+  }
+
+  Future<void> refreshBiometrics() async {
+    final status = await native.getBiometricStatus();
+    biometric = status;
+    notifyListeners();
+  }
+
+  Future<void> setBiometricEnabled(bool enabled) async {
+    biometric = BiometricStatus(
+      available: biometric.available,
+      enrolled: biometric.enrolled,
+      enabled: enabled,
+    );
+    await storage.setBiometricEnabled(enabled);
+    await native.setBiometricEnabled(enabled);
+    notifyListeners();
   }
 
   Future<void> refreshPermissions() async {

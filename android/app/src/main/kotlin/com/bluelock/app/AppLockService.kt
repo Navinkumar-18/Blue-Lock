@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 /**
@@ -104,6 +105,10 @@ class AppLockService : Service() {
         val previous = lastForeground
         lastForeground = fg
 
+        if (fg != previous) {
+            Log.d(TAG, "foreground changed: $previous -> $fg")
+        }
+
         val protectedApps = LockPrefs.protectedPackages(this)
 
         // Leaving a foreground-only session app invalidates its session.
@@ -111,6 +116,7 @@ class AppLockService : Service() {
             if (protectedApps.contains(previous) &&
                 prefsHasForegroundOnly(previous)
             ) {
+                Log.d(TAG, "clearing fg-only session for $previous")
                 LockPrefs.clearSession(this, previous)
             }
         }
@@ -118,9 +124,24 @@ class AppLockService : Service() {
         if (fg == packageName) return           // never lock ourselves
         if (fg in systemExcluded) return        // launcher / system UI
         if (!protectedApps.contains(fg)) return
-        if (LockPrefs.isUnlocked(this, fg)) return
-        if (LockActivity.isShowing) return      // avoid duplicate lock screens
+        if (LockPrefs.isUnlocked(this, fg)) {
+            if (fg != previous) {
+                Log.d(TAG, "$fg has an active unlock session - not locking")
+            }
+            return
+        }
 
+        if (LockActivity.isShowing) {
+            val showing = LockActivity.showingPackage
+            if (showing == fg) return           // same lock already up
+            // A different protected app came to the front while a lock was
+            // showing - retarget the single-instance lock activity.
+            Log.d(TAG, "retargeting lock from $showing to $fg")
+            showLock(fg)
+            return
+        }
+
+        Log.d(TAG, "$fg is protected and locked - launching LockActivity")
         showLock(fg)
     }
 
@@ -129,6 +150,7 @@ class AppLockService : Service() {
             .contains("fg_only_$pkg")
 
     private fun showLock(packageName: String) {
+        Log.d(TAG, "starting LockActivity for $packageName")
         val intent = Intent(this, LockActivity::class.java).apply {
             putExtra(LockActivity.EXTRA_PACKAGE, packageName)
             addFlags(
@@ -143,6 +165,7 @@ class AppLockService : Service() {
     }
 
     companion object {
+        private const val TAG = "BlueLock"
         private const val POLL_MS = 400L
         private const val NOTIFICATION_ID = 5100
 

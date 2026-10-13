@@ -41,27 +41,59 @@ class SettingsScreen extends StatelessWidget {
                   BlueLockCard(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 4),
-                    child: SwitchListTile(
-                      value: controller.lockEnabled,
-                      onChanged: controller.setLockEnabled,
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text(
-                        'App-lock protection',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
+                    child: Column(
+                      children: [
+                        SwitchListTile(
+                          value: controller.lockEnabled,
+                          onChanged: controller.setLockEnabled,
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text(
+                            'App-lock protection',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          subtitle: Text(
+                            controller.lockEnabled
+                                ? 'Protected apps require your PIN'
+                                : 'All apps are currently unlocked',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
                         ),
-                      ),
-                      subtitle: Text(
-                        controller.lockEnabled
-                            ? 'Protected apps require your PIN'
-                            : 'All apps are currently unlocked',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textSecondary,
+                        SwitchListTile(
+                          value: controller.biometricEnabled,
+                          onChanged: controller.biometricUsable ||
+                                  (controller.biometric.available &&
+                                      controller.biometric.enrolled)
+                              ? controller.setBiometricEnabled
+                              : null,
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text(
+                            'Biometric unlock',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          subtitle: Text(
+                            !controller.biometric.available
+                                ? 'Not available on this device'
+                                : controller.biometricEnabled
+                                    ? 'Fingerprint can unlock protected apps'
+                                    : 'PIN required for every unlock',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 18),

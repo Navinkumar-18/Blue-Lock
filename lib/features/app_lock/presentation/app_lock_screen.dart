@@ -4,6 +4,7 @@ import '../../../core/state/app_controller.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../installed_apps/models/installed_app.dart';
 import '../../installed_apps/services/apps_repository.dart';
+import '../services/biometric_status.dart';
 import '../services/lock_session.dart';
 import '../../../shared/widgets/pin_entry_panel.dart';
 
@@ -16,6 +17,7 @@ class AppLockScreen extends StatefulWidget {
     required this.packageName,
     required this.controller,
     this.onUnlocked,
+    this.nativeLock = false,
   });
 
   final String packageName;
@@ -23,6 +25,11 @@ class AppLockScreen extends StatefulWidget {
 
   /// Called after a successful unlock (when shown in-app as a preview).
   final VoidCallback? onUnlocked;
+
+  /// True when rendered by the native LockActivity over a protected app.
+  /// Only then may the system biometric prompt be auto-launched and the
+  /// forgot-PIN reset relies on the native activity finishing itself.
+  final bool nativeLock;
 
   @override
   State<AppLockScreen> createState() => _AppLockScreenState();
@@ -33,11 +40,14 @@ class _AppLockScreenState extends State<AppLockScreen> {
   InstalledApp? _app;
   bool _verifying = false;
   bool _unlocked = false;
+  BiometricStatus _biometric = BiometricStatus.unavailable;
+  bool _biometricPromptActive = false;
 
   @override
   void initState() {
     super.initState();
     _loadApp();
+    _initBiometric();
   }
 
   Future<void> _loadApp() async {
@@ -52,6 +62,46 @@ class _AppLockScreenState extends State<AppLockScreen> {
     }
     if (!mounted) return;
     setState(() => _app = app);
+  }
+
+  Future<void> _initBiometric() async {
+    final status = await LockSession.biometricStatus();
+    if (!mounted) return;
+    setState(() => _biometric = status);
+    // Only the native lock screen (over a protected app) auto-launches the
+    // system prompt; the in-app preview just offers the button.
+    if (widget.nativeLock && status.canUse && !_unlocked) {
+      _promptBiometric();
+    }
+  }
+
+  Future<void> _promptBiometric() async {
+    if (_biometricPromptActive || _verifying || _unlocked) return;
+    if (!_biometric.canUse) return;
+    _biometricPromptActive = true;
+    final outcome = await LockSession.authenticateBiometric(
+      packageName: widget.packageName,
+      label: _app?.label ?? widget.packageName,
+    );
+    _biometricPromptActive = false;
+    if (!mounted || _unlocked) return;
+    if (outcome == 'success') {
+      _unlocked = true;
+      await LockSession.unlock(widget.packageName);
+      widget.onUnlocked?.call();
+      // Native LockActivity dismisses itself; in-app preview pops back.
+      if (mounted && widget.onUnlocked != null) {
+        Navigator.of(context).maybePop();
+      }
+      return;
+    }
+    if (outcome == 'user_cancel') return; // user chose the PIN keypad
+    // Failure or unavailability: PIN keypad remains as the fallback.
+    _panelKey.currentState?.showError(
+      outcome == 'unavailable'
+          ? 'Biometric unlock unavailable. Enter your PIN.'
+          : 'Biometric unlock failed. Enter your PIN.',
+    );
   }
 
   Future<void> _onPinCompleted(String pin) async {
@@ -109,6 +159,11 @@ class _AppLockScreenState extends State<AppLockScreen> {
     if (confirmed == true && mounted) {
       await widget.controller.resetProtection();
       await LockSession.resetProtection();
+      if (widget.nativeLock) {
+        // Native LockActivity wipes prefs and finishes itself; do not
+        // navigate the lock engine to any Blue Lock screen.
+        return;
+      }
       if (!mounted) return;
       Navigator.of(context).pushNamedAndRemoveUntil('/onboarding', (_) => false);
     }
@@ -179,6 +234,27 @@ class _AppLockScreenState extends State<AppLockScreen> {
                   forgotLabel: 'Forgot PIN?',
                   onForgot: _forgotPin,
                 ),
+                if (_biometric.canUse)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: TextButton.icon(
+                      onPressed:
+                          _biometricPromptActive ? null : _promptBiometric,
+                      icon: const Icon(
+                        Icons.fingerprint_rounded,
+                        size: 22,
+                        color: AppColors.primary,
+                      ),
+                      label: const Text(
+                        'Unlock with biometrics',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),

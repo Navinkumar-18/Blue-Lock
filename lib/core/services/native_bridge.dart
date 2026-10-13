@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
+import '../../features/app_lock/services/biometric_status.dart';
 import '../../features/installed_apps/models/installed_app.dart';
 
 /// Bridge to the native Android implementation (MainActivity).
@@ -112,4 +113,12 @@ class NativeBridge {
   Future<String?> getForegroundPackage() async {
     return _invoke<String>('getForegroundPackage');
   }
+
+  Future<BiometricStatus> getBiometricStatus() async {
+    final raw = await _invoke<Map<dynamic, dynamic>>('getBiometricStatus');
+    return BiometricStatus.fromMap(raw);
+  }
+
+  Future<void> setBiometricEnabled(bool enabled) =>
+      _invoke<void>('setBiometricEnabled', enabled);
 }

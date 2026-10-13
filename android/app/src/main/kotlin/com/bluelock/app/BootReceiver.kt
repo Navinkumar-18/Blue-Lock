@@ -8,6 +8,9 @@ import android.content.Intent
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action == Intent.ACTION_BOOT_COMPLETED) {
+            // Foreground-only unlock sessions do not survive a reboot: the
+            // protected app is no longer in the foreground.
+            LockPrefs.clearForegroundOnlySessions(context)
             AppLockService.ensureRunning(context)
         }
     }

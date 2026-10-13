@@ -18,6 +18,7 @@ class AppStorage {
   static const _kLockedPackages = 'locked_packages';
   static const _kRelockTimeout = 'relock_timeout_seconds';
   static const _kLockEnabled = 'lock_enabled';
+  static const _kBiometricEnabled = 'biometric_enabled';
 
   static const _kPinSalt = 'pin_salt';
   static const _kPinVerifier = 'pin_verifier';
@@ -96,6 +97,12 @@ class AppStorage {
   bool get lockEnabled => prefs.getBool(_kLockEnabled) ?? true;
 
   Future<void> setLockEnabled(bool value) => prefs.setBool(_kLockEnabled, value);
+
+  /// Whether biometric unlock is offered on the lock screen (user pref).
+  bool get biometricEnabled => prefs.getBool(_kBiometricEnabled) ?? true;
+
+  Future<void> setBiometricEnabled(bool value) =>
+      prefs.setBool(_kBiometricEnabled, value);
 
   // ---- secure helpers: in-memory fallback only when the platform channel
   // is absent (tests). Any real platform failure propagates. ----

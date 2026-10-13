@@ -32,6 +32,14 @@ object LockPrefs {
         prefs(context).edit().putInt("relock_timeout", seconds).apply()
     }
 
+    /** Whether biometric unlock is offered on the lock screen (user pref). */
+    fun biometricEnabled(context: Context): Boolean =
+        prefs(context).getBoolean("biometric_enabled", true)
+
+    fun setBiometricEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean("biometric_enabled", enabled).apply()
+    }
+
     /**
      * Unlock session bookkeeping. [timeoutSeconds] == 0 means the app is only
      * unlocked while it remains in the foreground.
@@ -66,6 +74,20 @@ object LockPrefs {
         val editor = prefs(context).edit()
         for (key in prefs(context).all.keys) {
             if (key.startsWith("fg_only_") || key.startsWith("expiry_")) {
+                editor.remove(key)
+            }
+        }
+        editor.apply()
+    }
+
+    /**
+     * "Foreground-only" sessions are meaningless after a reboot: the protected
+     * app is no longer on screen, so the next open must re-lock.
+     */
+    fun clearForegroundOnlySessions(context: Context) {
+        val editor = prefs(context).edit()
+        for (key in prefs(context).all.keys) {
+            if (key.startsWith("fg_only_")) {
                 editor.remove(key)
             }
         }

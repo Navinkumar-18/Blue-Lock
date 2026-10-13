@@ -25,14 +25,25 @@ class BlueLockApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       onGenerateRoute: (settings) {
-        final name = settings.name ?? '/';
-        // Native LockActivity launches with initial route "lock/<package>".
+        final raw = settings.name ?? '/';
+        // Native LockActivity boots this engine with initial route
+        // "lock/<package>" (no leading slash - see LockActivity.getInitialRoute).
+        // A leading slash would make Navigator.defaultGenerateInitialRoutes
+        // split the route into segments and stack "/" and "/lock" underneath
+        // the lock screen, so the native side deliberately omits it. Normalise
+        // here so both forms resolve to the same lock screen instead of
+        // falling through to the dashboard (the original bug: the user saw
+        // the Blue Lock dashboard over the protected app).
+        final name = raw.startsWith('/') ? raw : '/$raw';
         if (name.startsWith('/lock/')) {
           final packageName = name.substring('/lock/'.length);
           return MaterialPageRoute(
             builder: (_) => AppLockScreen(
               packageName: packageName,
               controller: controller,
+              // Rendered by the native LockActivity: may auto-prompt for
+              // biometrics and never routes to the dashboard.
+              nativeLock: true,
             ),
             settings: settings,
           );
