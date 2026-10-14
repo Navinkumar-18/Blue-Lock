@@ -11,7 +11,7 @@
   [![Dart](https://img.shields.io/badge/Dart-3.13.5-0175C2?logo=dart&logoColor=white)](https://dart.dev)
   [![Android](https://img.shields.io/badge/Android-API%2026%2B-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
   [![Kotlin](https://img.shields.io/badge/Kotlin-Native%20FGS-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
-  [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+  [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 </div>
 
@@ -173,4 +173,4 @@ flutter analyze
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
