@@ -36,6 +36,11 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            // R8 code shrinking is on by default for Flutter release builds;
+            // make it explicit together with resource shrinking. MethodChannel
+            // integrations are string-keyed and unaffected by R8.
+            isMinifyEnabled = true
+            isShrinkResources = true
         }
     }
 }
