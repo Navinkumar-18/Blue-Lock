@@ -146,7 +146,7 @@ class _HomeDashboardState extends State<HomeDashboard>
             width: 64,
             height: 64,
             decoration: BoxDecoration(
-              color: AppColors.lavender,
+              color: AppColors.paleBlueSoft,
               borderRadius: BorderRadius.circular(18),
             ),
             child: const Icon(Icons.lock_outline,
@@ -189,7 +189,7 @@ class _HomeDashboardState extends State<HomeDashboard>
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: AppColors.lavender,
+                  color: AppColors.paleBlueSoft,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: const Icon(Icons.shield_outlined,

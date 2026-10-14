@@ -24,6 +24,7 @@ class _ManageAppsScreenState extends State<ManageAppsScreen>
   String _query = '';
   _Filter _filter = _Filter.all;
   bool _initialized = false;
+  final FocusNode _searchFocus = FocusNode();
 
   @override
   bool get wantKeepAlive => true;
@@ -31,10 +32,18 @@ class _ManageAppsScreenState extends State<ManageAppsScreen>
   @override
   void initState() {
     super.initState();
+    // Rebuild on focus change so the search border can turn blue.
+    _searchFocus.addListener(() => setState(() {}));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.controller.loadInstalledApps();
       setState(() => _initialized = true);
     });
+  }
+
+  @override
+  void dispose() {
+    _searchFocus.dispose();
+    super.dispose();
   }
 
   List<InstalledApp> get _filtered {
@@ -135,9 +144,15 @@ class _ManageAppsScreenState extends State<ManageAppsScreen>
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(
+          color: _searchFocus.hasFocus
+              ? AppColors.primary
+              : AppColors.border,
+          width: _searchFocus.hasFocus ? 1.5 : 1,
+        ),
       ),
       child: TextField(
+        focusNode: _searchFocus,
         onChanged: (value) => setState(() => _query = value),
         style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
         decoration: const InputDecoration(
@@ -161,7 +176,7 @@ class _ManageAppsScreenState extends State<ManageAppsScreen>
           label: Text(label),
           selected: selected,
           onSelected: (_) => setState(() => _filter = value),
-          selectedColor: AppColors.lavenderStrong,
+          selectedColor: AppColors.paleBlue,
           backgroundColor: AppColors.surface,
           side: const BorderSide(color: AppColors.border),
           labelStyle: TextStyle(
@@ -236,7 +251,7 @@ class _ManageAppsScreenState extends State<ManageAppsScreen>
                 width: 64,
                 height: 64,
                 decoration: BoxDecoration(
-                  color: AppColors.lavender,
+                  color: AppColors.paleBlueSoft,
                   borderRadius: BorderRadius.circular(18),
                 ),
                 child: const Icon(Icons.search_off,
@@ -359,7 +374,7 @@ class _AppRow extends StatelessWidget {
         child: bytes != null && bytes.isNotEmpty
             ? Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true)
             : ColoredBox(
-                color: AppColors.lavender,
+                color: AppColors.paleBlueSoft,
                 child: Center(
                   child: Text(
                     app.label.isEmpty

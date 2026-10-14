@@ -66,6 +66,15 @@ class AppController extends ChangeNotifier {
   bool get lockEnabled => _lockEnabled;
   bool get hasPin => pinService.hasPinSync;
 
+  /// Blue Lock's own unlock session (self-lock). Cached so the app-entry
+  /// gate can decide synchronously; the source of truth is native LockPrefs
+  /// which survives backgrounding and process restarts correctly.
+  bool selfUnlocked = false;
+
+  /// Self-lock only applies once setup finished: without a stored PIN there
+  /// is nothing to authenticate against, so first-run onboarding stays open.
+  bool get selfSetupDone => onboardingDone && hasPin;
+
   bool get biometricEnabled => biometric.enabled;
   bool get biometricUsable => biometric.canUse;
 
@@ -85,6 +94,40 @@ class AppController extends ChangeNotifier {
     await pinService.loadPinState();
     await refreshPermissions();
     await refreshBiometrics();
+    await refreshSelfSession();
+  }
+
+  /// Re-reads Blue Lock's own unlock session from native storage. An expired
+  /// or missing session locks the app-entry gate; a still-valid timed
+  /// session keeps it open (e.g. returning within the configured window).
+  Future<void> refreshSelfSession() async {
+    selfUnlocked = await native.isSelfUnlocked();
+    notifyListeners();
+  }
+
+  /// Records a successful Blue Lock authentication under the relock policy
+  /// and opens the app-entry gate.
+  Future<void> grantSelfSession() async {
+    await native.unlockSelf();
+    selfUnlocked = true;
+    notifyListeners();
+  }
+
+  /// Blue Lock left the foreground: apply the relock policy natively and
+  /// reflect the immediate case in the cached gate state.
+  Future<void> onSelfBackgrounded() async {
+    await native.onSelfBackgrounded();
+    if (relockTimeoutSeconds <= 0) {
+      selfUnlocked = false;
+      notifyListeners();
+    }
+  }
+
+  /// Expires Blue Lock's own session (forgot-PIN reset).
+  Future<void> revokeSelfSession() async {
+    await native.lockSelf();
+    selfUnlocked = false;
+    notifyListeners();
   }
 
   Future<void> refreshBiometrics() async {
@@ -178,6 +221,7 @@ class AppController extends ChangeNotifier {
     await native.setLockEnabled(true);
     onboardingDone = false;
     await storage.setOnboardingDone(false);
+    await revokeSelfSession();
     notifyListeners();
   }
 

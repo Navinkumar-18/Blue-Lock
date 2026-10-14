@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Process
 import android.provider.Settings
 import android.util.Base64
+import androidx.fragment.app.FragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
@@ -20,17 +21,22 @@ import java.io.ByteArrayOutputStream
 /**
  * Method channel between Flutter and native Android:
  * installed-app discovery, permission state, lock configuration and
- * foreground detection.
+ * foreground detection. Also hosts the self-authentication session and the
+ * AndroidX biometric prompt used when Blue Lock locks itself.
  */
 object NativeBridge {
     private const val CHANNEL = "com.bluelock.app/native"
 
-    fun register(context: Context, flutterEngine: FlutterEngine) {
-        val appContext = context.applicationContext
+    /** One system biometric prompt at a time across the process. */
+    @Volatile
+    private var biometricActive = false
+
+    fun register(activity: FragmentActivity, flutterEngine: FlutterEngine) {
+        val appContext = activity.applicationContext
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
                 try {
-                    handle(appContext, call.method, call.arguments, result)
+                    handle(activity, appContext, call.method, call.arguments, result)
                 } catch (e: Exception) {
                     result.error("native_error", e.message, null)
                 }
@@ -39,6 +45,7 @@ object NativeBridge {
 
     @Suppress("UNCHECKED_CAST")
     private fun handle(
+        activity: FragmentActivity,
         context: Context,
         method: String,
         arguments: Any?,
@@ -93,7 +100,13 @@ object NativeBridge {
                 result.success(null)
             }
             "setRelockTimeout" -> {
-                LockPrefs.setRelockTimeout(context, (arguments as? Int) ?: 0)
+                val timeout = (arguments as? Int) ?: 0
+                if (timeout != LockPrefs.relockTimeout(context)) {
+                    // Policy changed: a session granted under the previous
+                    // policy must not be honoured under the new one.
+                    LockPrefs.clearSelfSession(context)
+                }
+                LockPrefs.setRelockTimeout(context, timeout)
                 result.success(null)
             }
             "lockPackage" -> {
@@ -127,7 +140,62 @@ object NativeBridge {
                 LockPrefs.setBiometricEnabled(context, arguments == true)
                 result.success(null)
             }
+            // ---- Blue Lock self-authentication (app-entry gate) ----
+            "isSelfUnlocked" -> result.success(LockPrefs.isSelfUnlocked(context))
+            "unlockSelf" -> {
+                LockPrefs.unlockSelf(context)
+                result.success(null)
+            }
+            "lockSelf" -> {
+                LockPrefs.clearSelfSession(context)
+                result.success(null)
+            }
+            "selfBackgrounded" -> {
+                LockPrefs.onSelfBackgrounded(context)
+                result.success(null)
+            }
+            "authenticateBiometric" ->
+                authenticateBiometric(activity, context, arguments, result)
             else -> result.notImplemented()
+        }
+    }
+
+    /**
+     * AndroidX [androidx.biometric.BiometricPrompt] for Blue Lock's own
+     * authentication gate. Only a platform-reported success resolves the
+     * pending result as success; cancellation and failure surface as errors
+     * so the Flutter side keeps the PIN keypad as the fallback.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun authenticateBiometric(
+        activity: FragmentActivity,
+        context: Context,
+        arguments: Any?,
+        result: MethodChannel.Result
+    ) {
+        if (biometricActive) {
+            result.error("busy", "Biometric prompt already showing", null)
+            return
+        }
+        if (!BiometricAuth.canAuthenticate(context)) {
+            result.error("unavailable", "No enrolled biometrics", null)
+            return
+        }
+        val args = arguments as? Map<*, *>
+        val label = args?.get("label") as? String ?: context.packageName
+        biometricActive = true
+        BiometricAuth.showPrompt(
+            activity = activity,
+            title = "Blue Lock",
+            subtitle = "Authenticate to open $label"
+        ) { outcome, detail ->
+            biometricActive = false
+            when {
+                outcome == "success" -> result.success(true)
+                outcome == "user_cancel" ->
+                    result.error("user_cancel", detail, null)
+                else -> result.error("auth_failed", detail, null)
+            }
         }
     }
 

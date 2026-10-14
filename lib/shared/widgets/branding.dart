@@ -63,7 +63,7 @@ class AppIconView extends StatelessWidget {
         child: bytes != null && bytes.isNotEmpty
             ? Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true)
             : ColoredBox(
-                color: AppColors.lavender,
+                color: AppColors.paleBlueSoft,
                 child: Center(
                   child: Text(
                     label.isEmpty ? '?' : label.characters.first.toUpperCase(),

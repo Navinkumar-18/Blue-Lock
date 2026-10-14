@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/app_theme.dart';
 
-/// Primary filled button matching the Stitch design: indigo, rounded,
+/// Primary filled button matching the Stitch design: blue, rounded,
 /// ~54px tall.
 class PrimaryButton extends StatelessWidget {
   const PrimaryButton({
@@ -28,7 +28,7 @@ class PrimaryButton extends StatelessWidget {
         onPressed: active ? onPressed : null,
         style: FilledButton.styleFrom(
           backgroundColor: AppColors.primary,
-          disabledBackgroundColor: AppColors.lavenderStrong,
+          disabledBackgroundColor: AppColors.paleBlue,
           foregroundColor: Colors.white,
           disabledForegroundColor: Colors.white70,
           shape: RoundedRectangleBorder(

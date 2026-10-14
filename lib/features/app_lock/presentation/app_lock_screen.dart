@@ -192,7 +192,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
                   width: 76,
                   height: 76,
                   decoration: BoxDecoration(
-                    color: AppColors.lavender,
+                    color: AppColors.paleBlueSoft,
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: app?.iconBytes != null

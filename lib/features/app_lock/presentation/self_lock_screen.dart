@@ -1,0 +1,207 @@
+import 'package:flutter/material.dart';
+
+import '../../../core/state/app_controller.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../shared/widgets/branding.dart';
+import '../../../shared/widgets/pin_entry_panel.dart';
+import '../services/biometric_status.dart';
+
+/// Blue Lock's own authentication screen, shown by the app-entry gate before
+/// the dashboard becomes reachable. Reuses the same PIN panel, error copy and
+/// AndroidX system biometric prompt as the protected-app lock screen.
+class SelfLockScreen extends StatefulWidget {
+  const SelfLockScreen({super.key, required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<SelfLockScreen> createState() => _SelfLockScreenState();
+}
+
+class _SelfLockScreenState extends State<SelfLockScreen> {
+  final _panelKey = GlobalKey<PinEntryPanelState>();
+  bool _verifying = false;
+  bool _unlocked = false;
+  BiometricStatus _biometric = BiometricStatus.unavailable;
+  bool _biometricPromptActive = false;
+  bool _autoPrompted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initBiometric();
+  }
+
+  Future<void> _initBiometric() async {
+    final status = await widget.controller.native.getBiometricStatus();
+    if (!mounted) return;
+    setState(() => _biometric = status);
+    // System biometric prompt first when the user enabled it and the device
+    // can actually satisfy it. Never before credentials exist: the gate only
+    // mounts this screen once a PIN is stored.
+    if (status.canUse && !_unlocked) {
+      _promptBiometric(auto: true);
+    }
+  }
+
+  Future<void> _promptBiometric({bool auto = false}) async {
+    // At most one system prompt at a time; the automatic attempt runs once
+    // per mount so repeated lifecycle rebuilds cannot stack prompts.
+    if (_biometricPromptActive || _verifying || _unlocked) return;
+    if (auto && _autoPrompted) return;
+    if (!_biometric.canUse) return;
+    if (auto) _autoPrompted = true;
+    setState(() => _biometricPromptActive = true);
+    final outcome = await widget.controller.native
+        .authenticateBiometricSelf(label: 'Blue Lock');
+    if (!mounted) return;
+    setState(() => _biometricPromptActive = false);
+    if (_unlocked) return;
+    if (outcome == 'success') {
+      await _grant();
+      return;
+    }
+    if (outcome == 'user_cancel') return; // user chose the PIN keypad
+    // Failure or unavailability: the PIN keypad remains as the fallback.
+    _panelKey.currentState?.showError(
+      outcome == 'unavailable'
+          ? 'Biometric unlock unavailable. Enter your PIN.'
+          : 'Biometric unlock failed. Enter your PIN.',
+    );
+  }
+
+  Future<void> _onPinCompleted(String pin) async {
+    if (_verifying || _unlocked) return;
+    setState(() => _verifying = true);
+    final ok = await widget.controller.pinService.verifyPin(pin);
+    if (!mounted) return;
+    setState(() => _verifying = false);
+    if (ok) {
+      await _grant();
+    } else {
+      _panelKey.currentState?.showError('Incorrect PIN. Try again.');
+    }
+  }
+
+  /// Successful biometrics OR a valid PIN open the app - never both. The
+  /// gate watches the controller and swaps the dashboard in; no navigation
+  /// happens here so nothing can bounce back to the splash screen.
+  Future<void> _grant() async {
+    if (_unlocked) return;
+    _unlocked = true;
+    await widget.controller.grantSelfSession();
+  }
+
+  Future<void> _forgotPin() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text(
+          'Forgot PIN?',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        content: const Text(
+          'Your PIN cannot be recovered. Resetting Blue Lock removes your '
+          'PIN and unprotects all apps so you can set up a new PIN.',
+          style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Reset Blue Lock',
+                style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await widget.controller.resetProtection();
+    if (!mounted) return;
+    Navigator.of(context).pushNamedAndRemoveUntil('/onboarding', (_) => false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const AppLogo(size: 76),
+                const SizedBox(height: 14),
+                const Text(
+                  'Blue Lock',
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: const Icon(Icons.lock_rounded,
+                      size: 26, color: Colors.white),
+                ),
+                const SizedBox(height: 18),
+                PinEntryPanel(
+                  key: _panelKey,
+                  heading: 'App Locked',
+                  description: 'Enter your PIN to continue.',
+                  actionLabel: _verifying ? 'Checking...' : 'Unlock',
+                  onCompleted: _onPinCompleted,
+                  forgotLabel: 'Forgot PIN?',
+                  onForgot: _forgotPin,
+                ),
+                if (_biometric.canUse)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: TextButton.icon(
+                      onPressed: _biometricPromptActive
+                          ? null
+                          : () => _promptBiometric(),
+                      icon: const Icon(
+                        Icons.fingerprint_rounded,
+                        size: 22,
+                        color: AppColors.primary,
+                      ),
+                      label: const Text(
+                        'Unlock with biometrics',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

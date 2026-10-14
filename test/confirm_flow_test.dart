@@ -9,6 +9,7 @@ import 'package:blue_lock/core/state/app_controller.dart';
 import 'package:blue_lock/core/storage/app_storage.dart';
 import 'package:blue_lock/core/utils/perf_log.dart';
 import 'package:blue_lock/core/utils/pin_crypto.dart';
+import 'package:blue_lock/features/app_lock/presentation/self_lock_screen.dart';
 import 'package:blue_lock/features/dashboard/presentation/home_shell.dart';
 
 /// End-to-end coverage of the first-time setup flow (splash -> onboarding ->
@@ -238,7 +239,8 @@ void main() {
     expect(controller.hasPin, isFalse);
   });
 
-  testWidgets('returning user with stored PIN skips setup', (tester) async {
+  testWidgets('returning user with stored PIN skips setup but must '
+      'authenticate to reach home (self-lock)', (tester) async {
     // Complete setup once so state is fully persisted.
     final first = await makeController();
     await boot(tester, first);
@@ -256,9 +258,19 @@ void main() {
     final returning = await makeController();
     await boot(tester, returning);
 
-    expect(find.byType(HomeShell), findsOneWidget,
-        reason: 'returning user must land on home without PIN setup');
-    expect(find.text('Create your PIN'), findsNothing);
+    expect(find.text('Create your PIN'), findsNothing,
+        reason: 'setup must be skipped for a returning user');
+    expect(find.byType(SelfLockScreen), findsOneWidget,
+        reason: 'reopening Blue Lock must require authentication');
+    expect(find.byType(HomeShell), findsNothing,
+        reason: 'dashboard must stay unreachable until authenticated');
+
+    // The stored PIN unlocks Blue Lock.
+    await enterDigits(tester, '1234');
+    await waitFor(tester, () => find.byType(HomeShell).evaluate().isNotEmpty);
+    await tester.pumpAndSettle();
+    expect(find.byType(HomeShell), findsOneWidget);
+    expect(find.byType(SelfLockScreen), findsNothing);
   });
 
   testWidgets('enter-PIN screen rejects a wrong PIN and accepts the right one',

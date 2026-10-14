@@ -1,9 +1,16 @@
 package com.bluelock.app
 
-import io.flutter.embedding.android.FlutterActivity
+import androidx.fragment.app.FragmentActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 
-class MainActivity : FlutterActivity() {
+/**
+ * Hosts the Blue Lock dashboard. Extends [FlutterFragmentActivity] (instead
+ * of FlutterActivity) so the AndroidX [androidx.biometric.BiometricPrompt]
+ * used by the self-authentication gate can attach to this activity, exactly
+ * like [LockActivity] does for protected applications.
+ */
+class MainActivity : FlutterFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         NativeBridge.register(this, flutterEngine)

@@ -59,7 +59,7 @@ class HomeShellState extends State<HomeShell> {
           backgroundColor: AppColors.surface,
           surfaceTintColor: Colors.transparent,
           height: 66,
-          indicatorColor: AppColors.lavender,
+          indicatorColor: AppColors.paleBlue,
           labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
           destinations: const [
             NavigationDestination(

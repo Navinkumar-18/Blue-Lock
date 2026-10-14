@@ -56,7 +56,7 @@ class BlueLockCard extends StatelessWidget {
   }
 }
 
-/// Small status pill: green "Granted", amber "Missing", indigo informational.
+/// Small status pill: green "Granted", amber "Missing", blue informational.
 class StatusPill extends StatelessWidget {
   const StatusPill({super.key, required this.label, required this.tone});
 
@@ -69,7 +69,7 @@ class StatusPill extends StatelessWidget {
       StatusTone.success => (AppColors.successBg, AppColors.success),
       StatusTone.warning => (AppColors.warningBg, AppColors.warning),
       StatusTone.danger => (AppColors.dangerBg, AppColors.danger),
-      StatusTone.neutral => (AppColors.lavender, AppColors.primary),
+      StatusTone.neutral => (AppColors.paleBlueSoft, AppColors.primary),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),

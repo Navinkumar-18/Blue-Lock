@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/app_theme.dart';
 
-/// Row of PIN dots. Filled indigo when a digit is entered; red in error state.
+/// Row of PIN dots. Filled blue when a digit is entered; red in error state.
 class PinIndicators extends StatelessWidget {
   const PinIndicators({
     super.key,

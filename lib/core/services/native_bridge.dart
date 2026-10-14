@@ -121,4 +121,54 @@ class NativeBridge {
 
   Future<void> setBiometricEnabled(bool enabled) =>
       _invoke<void>('setBiometricEnabled', enabled);
+
+  // ---- Blue Lock self-authentication (app-entry gate) ----
+  //
+  // Sessions live in native LockPrefs keyed by our own package name, so they
+  // never collide with third-party protected-app sessions and keep working
+  // while Flutter is backgrounded (elapsed-time based expiry on the native
+  // side, not a Dart timer).
+
+  /// Whether Blue Lock's own unlock session is currently valid.
+  Future<bool> isSelfUnlocked() async =>
+      await _invoke<bool>('isSelfUnlocked') ?? false;
+
+  /// Records a successful Blue Lock authentication under the relock policy.
+  Future<void> unlockSelf() => _invoke<void>('unlockSelf');
+
+  /// Expires Blue Lock's own unlock session (forgot-PIN reset, recovery).
+  Future<void> lockSelf() => _invoke<void>('lockSelf');
+
+  /// Blue Lock left the foreground: immediate policy expires the session,
+  /// timed policies start the configured countdown from this moment.
+  Future<void> onSelfBackgrounded() => _invoke<void>('selfBackgrounded');
+
+  /// Launches the AndroidX system biometric prompt for Blue Lock itself.
+  /// Returns the same outcome vocabulary as the lock screen:
+  ///  - 'success'     platform-reported authentication success
+  ///  - 'user_cancel' user dismissed the prompt / chose PIN
+  ///  - 'unavailable' no biometrics, busy, or running outside Android
+  ///  - 'failed'      any other platform error (never treated as success)
+  Future<String> authenticateBiometricSelf({required String label}) async {
+    try {
+      final ok = await channel.invokeMethod<bool>('authenticateBiometric', {
+        'package': 'com.bluelock.app',
+        'label': label,
+      });
+      return ok == true ? 'success' : 'failed';
+    } on MissingPluginException {
+      available = false;
+      return 'unavailable';
+    } on PlatformException catch (e) {
+      switch (e.code) {
+        case 'user_cancel':
+          return 'user_cancel';
+        case 'unavailable':
+        case 'busy':
+          return 'unavailable';
+        default:
+          return 'failed';
+      }
+    }
+  }
 }

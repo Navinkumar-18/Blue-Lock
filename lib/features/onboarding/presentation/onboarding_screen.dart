@@ -105,7 +105,7 @@ class _FeatureItem extends StatelessWidget {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: AppColors.lavender,
+              color: AppColors.paleBlueSoft,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(icon, color: AppColors.primary, size: 22),

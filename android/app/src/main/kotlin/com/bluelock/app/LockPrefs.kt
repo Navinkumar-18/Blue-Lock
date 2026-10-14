@@ -2,10 +2,18 @@ package com.bluelock.app
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Process
 
 /** Local persistence for lock configuration and unlock sessions. */
 object LockPrefs {
     private const val FILE = "bluelock_prefs"
+
+    /**
+     * Process that granted Blue Lock's own (self-lock) foreground-only
+     * session. A process restart must never inherit an immediate-relock
+     * session, so the stored pid is compared on every check.
+     */
+    private const val SELF_PID = "self_pid"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -80,6 +88,7 @@ object LockPrefs {
                 editor.remove(key)
             }
         }
+        editor.remove(SELF_PID)
         editor.apply()
     }
 
@@ -94,7 +103,58 @@ object LockPrefs {
                 editor.remove(key)
             }
         }
+        editor.remove(SELF_PID)
         editor.apply()
+    }
+
+    // ---- Self-lock: Blue Lock's own unlock session ----
+    //
+    // Keyed by Blue Lock's own package name so it can never collide with a
+    // third-party protected-app session. Blue Lock itself is never added to
+    // the protected-package list (that would make AppLockService relaunch
+    // LockActivity over our own UI); self-authentication is a separate
+    // app-entry gate that reuses these same session primitives.
+
+    /**
+     * Grants Blue Lock a self session under the current relock policy.
+     * Immediate (0s) sessions are foreground-only and additionally bound to
+     * the granting process so a process restart cannot inherit them.
+     */
+    fun unlockSelf(context: Context) {
+        val pkg = context.packageName
+        unlock(context, pkg, relockTimeout(context))
+        prefs(context).edit().putLong(SELF_PID, Process.myPid().toLong()).apply()
+    }
+
+    fun isSelfUnlocked(context: Context): Boolean {
+        val pkg = context.packageName
+        if (prefs(context).contains("fg_only_$pkg")) {
+            // Immediate relock: valid only while the granting process lives.
+            return prefs(context).getLong(SELF_PID, -1L) == Process.myPid().toLong()
+        }
+        // Timed session: wall-clock expiry, same primitive as protected apps.
+        return isUnlocked(context, pkg)
+    }
+
+    /**
+     * Called when Blue Lock leaves the foreground. Immediate policy expires
+     * the session at once; timed policies retain it for exactly the
+     * configured duration starting from this moment. An already-invalid
+     * session is cleared, never re-validated - otherwise backgrounding from
+     * the lock screen would silently unlock the app.
+     */
+    fun onSelfBackgrounded(context: Context) {
+        val timeout = relockTimeout(context)
+        if (timeout > 0 && isSelfUnlocked(context)) {
+            unlock(context, context.packageName, timeout)
+        } else {
+            clearSelfSession(context)
+        }
+    }
+
+    fun clearSelfSession(context: Context) {
+        clearSession(context, context.packageName)
+        prefs(context).edit().remove(SELF_PID).apply()
     }
 
     fun resetAll(context: Context) {

@@ -32,5 +32,8 @@ Future<void> main() async {
     await controller.native.setBiometricEnabled(controller.biometricEnabled);
   }
 
-  runApp(BlueLockApp(controller: controller));
+  // The engine booted by LockActivity only ever renders the lock screen for
+  // a protected app: Blue Lock's own self-authentication gate and lifecycle
+  // session handling must not run there.
+  runApp(BlueLockApp(controller: controller, selfLockHost: !isLockRoute));
 }
