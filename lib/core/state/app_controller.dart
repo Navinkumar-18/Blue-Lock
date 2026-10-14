@@ -7,6 +7,7 @@ import '../../features/authentication/services/pin_service.dart';
 import '../../features/permissions/services/permissions_service.dart';
 import '../services/native_bridge.dart';
 import '../storage/app_storage.dart';
+import '../utils/perf_log.dart';
 
 /// Relock policy choices shown in Settings (seconds). 0 = immediately after
 /// leaving the app.
@@ -142,9 +143,9 @@ class AppController extends ChangeNotifier {
       enrolled: biometric.enrolled,
       enabled: enabled,
     );
+    notifyListeners();
     await storage.setBiometricEnabled(enabled);
     await native.setBiometricEnabled(enabled);
-    notifyListeners();
   }
 
   Future<void> refreshPermissions() async {
@@ -162,8 +163,11 @@ class AppController extends ChangeNotifier {
     appsError = null;
     notifyListeners();
     try {
+      final watch = Stopwatch()..start();
       installedApps = await appsRepository.getInstalledApps();
       appsError = null;
+      PerfLog.mark(
+          'apps: discovered ${installedApps.length} in ${watch.elapsedMilliseconds}ms');
     } catch (e) {
       appsError = 'Could not load installed apps.';
       installedApps = const [];
@@ -180,26 +184,30 @@ class AppController extends ChangeNotifier {
     final changed = locked ? next.add(packageName) : next.remove(packageName);
     if (!changed) return true;
     lockedPackages = next;
+    // Publish the new state first so the switch flips on the next frame,
+    // then persist to storage and native. Every step below is fallible but
+    // cheap; waiting for all three before notifying made each toggle wait
+    // on a SharedPreferences write plus two platform-channel round trips.
+    notifyListeners();
     await storage.setLockedPackages(next.toList());
     await native.setProtectedPackages(next.toList());
     // Clear any stale unlock session for this app (lock or unlock).
     await native.lockPackage(packageName);
-    notifyListeners();
     return true;
   }
 
   Future<void> setLockEnabled(bool enabled) async {
     _lockEnabled = enabled;
+    notifyListeners();
     await storage.setLockEnabled(enabled);
     await native.setLockEnabled(enabled);
-    notifyListeners();
   }
 
   Future<void> setRelockTimeout(int seconds) async {
     relockTimeoutSeconds = seconds;
+    notifyListeners();
     await storage.setRelockTimeoutSeconds(seconds);
     await native.setRelockTimeout(seconds);
-    notifyListeners();
   }
 
   Future<void> markOnboardingDone() async {

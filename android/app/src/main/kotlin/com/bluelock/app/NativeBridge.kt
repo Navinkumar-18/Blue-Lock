@@ -10,13 +10,17 @@ import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
 import android.provider.Settings
-import android.util.Base64
+import android.util.Log
 import androidx.fragment.app.FragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
 
 /**
  * Method channel between Flutter and native Android:
@@ -26,13 +30,40 @@ import java.io.ByteArrayOutputStream
  */
 object NativeBridge {
     private const val CHANNEL = "com.bluelock.app/native"
+    private const val TAG = "BlueLock"
 
     /** One system biometric prompt at a time across the process. */
     @Volatile
     private var biometricActive = false
 
-    fun register(activity: FragmentActivity, flutterEngine: FlutterEngine) {
-        val appContext = activity.applicationContext
+    /** Replies to the method channel on the platform thread, as required. */
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * Installed-app discovery (package queries + icon bitmap/PNG encoding for
+     * every app) runs here instead of on the Android main thread, so the
+     * platform thread stays free for input, rendering and platform messages
+     * while a large app list is being collected.
+     */
+    private val ioExecutor =
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "bluelock-io").apply { isDaemon = true }
+        }
+
+    /**
+     * Registers the native channel on [flutterEngine].
+     *
+     * [context] may be an activity (dashboard / cold-lock engines - enables
+     * the self-auth biometric prompt, which must attach to a
+     * [FragmentActivity]) or a plain application context (the pre-warmed
+     * cached lock engine, created before any activity exists). Biometric
+     * calls on a context-only registration report "unavailable"; the lock
+     * screen's own biometrics go through the separate lock channel and are
+     * unaffected.
+     */
+    fun register(context: Context, flutterEngine: FlutterEngine) {
+        val appContext = context.applicationContext
+        val activity = context as? FragmentActivity
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
                 try {
@@ -45,14 +76,30 @@ object NativeBridge {
 
     @Suppress("UNCHECKED_CAST")
     private fun handle(
-        activity: FragmentActivity,
+        activity: FragmentActivity?,
         context: Context,
         method: String,
         arguments: Any?,
         result: MethodChannel.Result
     ) {
         when (method) {
-            "getInstalledApps" -> result.success(getInstalledApps(context))
+            "getInstalledApps" -> {
+                val t0 = SystemClock.elapsedRealtime()
+                ioExecutor.execute {
+                    try {
+                        val apps = getInstalledApps(context)
+                        Log.d(
+                            TAG,
+                            "getInstalledApps: ${apps.size} apps in " +
+                                "${SystemClock.elapsedRealtime() - t0}ms " +
+                                "on ${Thread.currentThread().name}"
+                        )
+                        mainHandler.post { result.success(apps) }
+                    } catch (e: Exception) {
+                        mainHandler.post { result.error("native_error", e.message, null) }
+                    }
+                }
+            }
             "getAppInfo" -> {
                 val pkg = arguments as? String
                 if (pkg == null) {
@@ -168,11 +215,17 @@ object NativeBridge {
      */
     @Suppress("UNCHECKED_CAST")
     private fun authenticateBiometric(
-        activity: FragmentActivity,
+        activity: FragmentActivity?,
         context: Context,
         arguments: Any?,
         result: MethodChannel.Result
     ) {
+        if (activity == null) {
+            // Registered against a plain application context (cached lock
+            // engine): no FragmentActivity to attach the system prompt to.
+            result.error("unavailable", "No host activity for biometric prompt", null)
+            return
+        }
         if (biometricActive) {
             result.error("busy", "Biometric prompt already showing", null)
             return
@@ -226,7 +279,7 @@ object NativeBridge {
             val info = pm.getPackageInfo(pkg, 0)
             val appInfo = info.applicationInfo ?: return null
             val label = pm.getApplicationLabel(appInfo).toString()
-            val icon = iconToBase64(pm.getApplicationIcon(appInfo))
+            val icon = iconToBytes(pm.getApplicationIcon(appInfo))
             val isSystem =
                 (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
             mapOf(
@@ -254,13 +307,17 @@ object NativeBridge {
         return bitmap
     }
 
-    private fun iconToBase64(drawable: Drawable): String {
+    /**
+     * PNG-encodes the launcher icon to raw bytes. Raw byte arrays travel
+     * over the standard codec untouched - unlike Base64 text they add no
+     * 33% payload overhead and need no decode pass on the Dart side.
+     */
+    private fun iconToBytes(drawable: Drawable): ByteArray {
         val bitmap = drawableToBitmap(drawable)
         val stream = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
-        val bytes = stream.toByteArray()
         bitmap.recycle()
-        return Base64.encodeToString(bytes, Base64.NO_WRAP)
+        return stream.toByteArray()
     }
 
     private fun hasUsageAccess(context: Context): Boolean {

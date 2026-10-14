@@ -30,6 +30,13 @@ class HomeShellState extends State<HomeShell> {
   }
 
   void goToTab(int index) {
+    if (index != _index) {
+      PerfLog.phase(switch (index) {
+        1 => 'apps-tab',
+        2 => 'settings-tab',
+        _ => 'home-tab',
+      });
+    }
     setState(() => _index = index);
   }
 

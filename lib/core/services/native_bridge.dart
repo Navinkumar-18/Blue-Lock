@@ -25,6 +25,20 @@ class NativeBridge {
     }
   }
 
+  /// Icon payload from native: raw PNG bytes (current protocol) or a
+  /// Base64 string (kept for compatibility with older payloads).
+  static Uint8List? decodeIcon(dynamic raw) {
+    if (raw is Uint8List) return raw;
+    if (raw is String && raw.isNotEmpty) {
+      try {
+        return base64Decode(raw);
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
+
   Future<List<InstalledApp>> getInstalledApps() async {
     final raw = await _invoke<List<dynamic>>('getInstalledApps');
     if (raw == null) return const [];
@@ -35,19 +49,10 @@ class NativeBridge {
       final packageName = map['package'] as String?;
       final label = map['label'] as String?;
       if (packageName == null || label == null) continue;
-      Uint8List? icon;
-      final iconB64 = map['icon'] as String?;
-      if (iconB64 != null && iconB64.isNotEmpty) {
-        try {
-          icon = base64Decode(iconB64);
-        } catch (_) {
-          icon = null;
-        }
-      }
       apps.add(InstalledApp(
         packageName: packageName,
         label: label,
-        iconBytes: icon,
+        iconBytes: decodeIcon(map['icon']),
         isSystem: map['isSystem'] as bool? ?? false,
       ));
     }
@@ -58,19 +63,10 @@ class NativeBridge {
     final raw = await _invoke<Map<dynamic, dynamic>>('getAppInfo', packageName);
     if (raw == null) return null;
     final map = Map<String, dynamic>.from(raw);
-    Uint8List? icon;
-    final iconB64 = map['icon'] as String?;
-    if (iconB64 != null && iconB64.isNotEmpty) {
-      try {
-        icon = base64Decode(iconB64);
-      } catch (_) {
-        icon = null;
-      }
-    }
     return InstalledApp(
       packageName: map['package'] as String? ?? packageName,
       label: map['label'] as String? ?? packageName,
-      iconBytes: icon,
+      iconBytes: decodeIcon(map['icon']),
       isSystem: map['isSystem'] as bool? ?? false,
     );
   }

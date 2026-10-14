@@ -9,22 +9,50 @@ import android.util.Log
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.lang.ref.WeakReference
 
 /**
- * Full-screen activity hosted over a protected app. Boots a Flutter engine
- * with initial route "lock/<package>", which renders the existing Flutter
- * lock screen (app icon, name, PIN keypad, optional biometrics). Finishes
- * when the user authenticates or leaves the protected app.
+ * Full-screen activity hosted over a protected app. Shows the existing
+ * Flutter lock screen (app icon, name, PIN keypad, optional biometrics).
+ * Finishes when the user authenticates or leaves the protected app.
+ *
+ * Two engine paths:
+ *  - Warm: attaches the process-wide pre-warmed engine from
+ *    [LockEngineCache] (see there). The engine is already booted; the
+ *    protected package is pushed over the lock channel and the PIN screen
+ *    replaces the idle placeholder. This removes the multi-hundred-ms to
+ *    multi-second engine cold start from the authentication path.
+ *  - Cold (cache empty): boots a fresh engine with initial route
+ *    "lock/<package>" - the original behaviour, kept as a correct fallback.
  *
  * Extends [FlutterFragmentActivity] so androidx [BiometricPrompt] can attach
  * to this activity.
  */
 class LockActivity : FlutterFragmentActivity() {
 
-    private var lockedPackage: String? = null
+    @Volatile
+    var lockedPackage: String? = null
+        private set
+
     private var biometricPrompt: androidx.biometric.BiometricPrompt? = null
     private var biometricActive = false
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** elapsedRealtime of the service's launch trigger, if provided. */
+    private var launchTriggerTime = 0L
+
+    /** Milliseconds from the service trigger to now, or -1 if unknown. */
+    fun launchTimeFromTrigger(): Long =
+        if (launchTriggerTime > 0) SystemClock.elapsedRealtime() - launchTriggerTime
+        else -1
+
+    /**
+     * Non-null only while [LockEngineCache] holds a warmed engine: the
+     * embedding then attaches that engine instead of creating a new one and
+     * ignores [getInitialRoute] (the engine is already running the idle
+     * "lock/" route; the package arrives via the lock channel).
+     */
+    override fun getCachedEngineId(): String? = LockEngineCache.engineIdOrNull()
 
     override fun getInitialRoute(): String {
         val pkg = intent.getStringExtra(EXTRA_PACKAGE) ?: ""
@@ -36,15 +64,30 @@ class LockActivity : FlutterFragmentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val launchTime = intent.getLongExtra(EXTRA_LAUNCH_TIME, 0L)
         val t0 = SystemClock.elapsedRealtime()
+        launchTriggerTime = intent.getLongExtra(EXTRA_LAUNCH_TIME, 0L)
         lockedPackage = intent.getStringExtra(EXTRA_PACKAGE)
         isShowing = true
         showingPackage = lockedPackage
-        Log.d(TAG, "onCreate: showing lock screen for $lockedPackage")
+        launchPendingSince = 0L
+        LockEngineCache.currentActivity = WeakReference(this)
+        val cached = LockEngineCache.isReady
+        Log.d(
+            TAG,
+            "onCreate: showing lock screen for $lockedPackage (cachedEngine=$cached)"
+        )
         super.onCreate(savedInstanceState)
-        val elapsedFromLaunch = if (launchTime > 0) SystemClock.elapsedRealtime() - launchTime else -1
-        Log.i(TAG, "PERF: LockActivity.onCreate done: ${SystemClock.elapsedRealtime() - t0}ms (total from service: ${elapsedFromLaunch}ms)")
+        if (cached) {
+            // Warm path: the Dart lock host is already running on the cached
+            // engine - push the protected package so the PIN screen replaces
+            // the idle placeholder. Handler registered at warm time.
+            lockedPackage?.let { LockEngineCache.showLock(it) }
+        }
+        Log.i(
+            TAG,
+            "PERF: LockActivity.onCreate done: ${SystemClock.elapsedRealtime() - t0}ms" +
+                " (total from service: ${launchTimeFromTrigger()}ms)"
+        )
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -53,24 +96,39 @@ class LockActivity : FlutterFragmentActivity() {
         val pkg = intent.getStringExtra(EXTRA_PACKAGE)
         Log.d(TAG, "onNewIntent: pkg=$pkg current=$lockedPackage")
         if (pkg != null && pkg != lockedPackage) {
-            // A different protected app came to the front: rebuild so the
-            // engine boots with the lock/<new package> route.
-            recreate()
+            lockedPackage = pkg
+            showingPackage = pkg
+            if (LockEngineCache.isReady) {
+                // Retarget the running lock host without rebooting an engine.
+                LockEngineCache.showLock(pkg)
+            } else {
+                // Cold engine: rebuild so the fresh boot uses the new route.
+                recreate()
+            }
         }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        val launchTime = intent.getLongExtra(EXTRA_LAUNCH_TIME, 0L)
-        if (hasFocus && launchTime > 0) {
-            val total = SystemClock.elapsedRealtime() - launchTime
-            Log.i(TAG, "PERF: LockActivity window focused at ${total}ms from service trigger")
+        if (hasFocus && launchTriggerTime > 0) {
+            Log.i(
+                TAG,
+                "PERF: LockActivity window focused at ${launchTimeFromTrigger()}ms from service trigger"
+            )
         }
     }
 
     override fun onDestroy() {
         isShowing = false
         showingPackage = null
+        if (LockEngineCache.currentActivity?.get() === this) {
+            LockEngineCache.currentActivity = null
+            // Reset the cached engine's Dart host to its idle placeholder so
+            // the next protected app starts from a clean lock screen.
+            if (LockEngineCache.isReady) {
+                LockEngineCache.clearLock()
+            }
+        }
         Log.d(TAG, "onDestroy: lockedPackage=$lockedPackage")
         super.onDestroy()
     }
@@ -79,14 +137,21 @@ class LockActivity : FlutterFragmentActivity() {
         super.onStop()
         // The user left the protected app (home / recents) - dismiss the lock
         // screen; the session was never granted. Stay alive while the system
-        // biometric prompt is on screen.
-        if (!biometricActive) {
+        // biometric prompt is on screen (own prompt on the cold path, the
+        // cached engine's prompt on the warm path).
+        if (!biometricActive && !LockEngineCache.isBiometricActive) {
             Log.d(TAG, "onStop without active biometric - finishing")
             finish()
         }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        if (LockEngineCache.isReady) {
+            // Cached engine: NativeBridge and the lock channel were registered
+            // once when the engine was warmed - do not re-register.
+            Log.d(TAG, "configureFlutterEngine: cached engine - skipping registration")
+            return
+        }
         super.configureFlutterEngine(flutterEngine)
         NativeBridge.register(this, flutterEngine)
 
@@ -124,10 +189,12 @@ class LockActivity : FlutterFragmentActivity() {
                 "authenticateBiometric" ->
                     authenticateBiometric(call.arguments, result)
                 "markUsable" -> {
-                    val launchTime = intent.getLongExtra(EXTRA_LAUNCH_TIME, 0L)
-                    if (launchTime > 0) {
-                        val total = SystemClock.elapsedRealtime() - launchTime
-                        Log.i(TAG, "PERF: First usable lock screen UI reached in ${total}ms from launch")
+                    val total = launchTimeFromTrigger()
+                    if (total >= 0) {
+                        Log.i(
+                            TAG,
+                            "PERF: First usable lock screen UI reached in ${total}ms from launch"
+                        )
                     } else {
                         Log.i(TAG, "PERF: First usable lock screen UI reached")
                     }
@@ -191,5 +258,14 @@ class LockActivity : FlutterFragmentActivity() {
         @Volatile
         var showingPackage: String? = null
             private set
+
+        /**
+         * elapsedRealtime when the service last requested a lock launch and
+         * the activity had not yet come up. Cleared in onCreate; lets the
+         * service suppress duplicate startActivity calls in the gap between
+         * the request and the activity's first on-screen frame.
+         */
+        @Volatile
+        var launchPendingSince: Long = 0L
     }
 }

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'core/state/app_controller.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/perf_log.dart';
-import 'features/app_lock/presentation/app_lock_screen.dart';
+import 'features/app_lock/presentation/lock_host_screen.dart';
 import 'features/app_lock/presentation/self_auth_gate.dart';
 import 'features/authentication/presentation/change_pin_screen.dart';
 import 'features/authentication/presentation/confirm_pin_screen.dart';
@@ -94,14 +94,15 @@ class _BlueLockAppState extends State<BlueLockApp> with WidgetsBindingObserver {
         // the Blue Lock dashboard over the protected app).
         final name = raw.startsWith('/') ? raw : '/$raw';
         if (name.startsWith('/lock/')) {
+          // Both "lock/<package>" (cold boot) and bare "lock/" (pre-warmed
+          // cached engine) land on the lock host: it renders the PIN screen
+          // for the route package immediately, or waits for the native
+          // "showLock" push when the engine was booted idle.
           final packageName = name.substring('/lock/'.length);
           return MaterialPageRoute(
-            builder: (_) => AppLockScreen(
-              packageName: packageName,
+            builder: (_) => LockHostScreen(
               controller: controller,
-              // Rendered by the native LockActivity: may auto-prompt for
-              // biometrics and never routes to the dashboard.
-              nativeLock: true,
+              initialPackage: packageName.isEmpty ? null : packageName,
             ),
             settings: settings,
           );

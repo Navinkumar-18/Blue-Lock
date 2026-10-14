@@ -9,9 +9,13 @@ class AppsRepository {
 
   Future<List<InstalledApp>> getInstalledApps() async {
     final apps = await _native.getInstalledApps();
-    final sorted = List<InstalledApp>.from(apps)
-      ..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
-    return sorted;
+    if (apps.length <= 1) return apps;
+    // Decorate-sort-undecorate: one toLowerCase per app instead of two per
+    // comparison during the sort.
+    final decorated = <MapEntry<String, InstalledApp>>[
+      for (final app in apps) MapEntry(app.label.toLowerCase(), app),
+    ]..sort((a, b) => a.key.compareTo(b.key));
+    return [for (final entry in decorated) entry.value];
   }
 
   Future<InstalledApp?> getAppInfo(String packageName) =>

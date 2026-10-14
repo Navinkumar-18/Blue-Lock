@@ -73,6 +73,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
   Future<void> _initBiometric() async {
     final status = await LockSession.biometricStatus();
     if (!mounted) return;
+    PerfLog.mark('lock: biometric status canUse=${status.canUse}');
     setState(() => _biometric = status);
     // Only the native lock screen (over a protected app) auto-launches the
     // system prompt; the in-app preview just offers the button.
@@ -84,6 +85,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
   Future<void> _promptBiometric() async {
     if (_biometricPromptActive || _verifying || _unlocked) return;
     if (!_biometric.canUse) return;
+    PerfLog.mark('lock: biometric prompt requested');
     _biometricPromptActive = true;
     final outcome = await LockSession.authenticateBiometric(
       packageName: widget.packageName,
@@ -198,8 +200,14 @@ class _AppLockScreenState extends State<AppLockScreen> {
                   child: app?.iconBytes != null
                       ? ClipRRect(
                           borderRadius: BorderRadius.circular(20),
-                          child: Image.memory(
-                            app!.iconBytes!,
+                          child: Image(
+                            // Decode at on-screen size (76 logical px).
+                            image: ResizeImage(
+                              MemoryImage(app!.iconBytes!),
+                              width: (76 *
+                                      MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
+                            ),
                             fit: BoxFit.cover,
                             gaplessPlayback: true,
                           ),

@@ -9,6 +9,11 @@ import '../../../shared/widgets/cards.dart';
 
 /// Screen E: home dashboard - branding, greeting, protected-app summary,
 /// protection status and setup guidance. All values come from real state.
+///
+/// Rebuild scoping: the scaffold, header and static copy are built once;
+/// only [_SummarySection] and [_StatusSection] listen to the controller, so
+/// a permission refresh or app-count change does not rebuild the scroll
+/// view, header or tip card.
 class HomeDashboard extends StatefulWidget {
   const HomeDashboard({
     super.key,
@@ -56,64 +61,55 @@ class _HomeDashboardState extends State<HomeDashboard>
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: ListenableBuilder(
-          listenable: controller,
-          builder: (context, _) {
-            return RefreshIndicator(
-              onRefresh: () async {
-                await controller.refreshPermissions();
-                await controller.loadInstalledApps(force: true);
-              },
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _header(context, controller),
-                    const SizedBox(height: 20),
-                    const Text(
-                      'Your privacy',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
-                        letterSpacing: -0.3,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Choose which apps require your PIN to open.',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    if (controller.protectedCount == 0)
-                      _emptyState(controller)
-                    else
-                      _summaryCard(controller),
-                    const SizedBox(height: 22),
-                    const SectionTitle('Protection Status'),
-                    _statusCard(controller),
-                    if (!controller.permissionsGranted) ...[
-                      const SizedBox(height: 14),
-                      _setupBanner(controller),
-                    ],
-                    const SizedBox(height: 14),
-                    _tipCard(),
-                  ],
-                ),
-              ),
-            );
+        child: RefreshIndicator(
+          onRefresh: () async {
+            await controller.refreshPermissions();
+            await controller.loadInstalledApps(force: true);
           },
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _header(context),
+                const SizedBox(height: 20),
+                const Text(
+                  'Your privacy',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Choose which apps require your PIN to open.',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                _SummarySection(
+                  controller: controller,
+                  onManageApps: widget.onManageApps,
+                ),
+                const SizedBox(height: 22),
+                const SectionTitle('Protection Status'),
+                _StatusSection(controller: controller),
+                const SizedBox(height: 14),
+                const _TipCard(),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 
-  Widget _header(BuildContext context, AppController controller) {
+  Widget _header(BuildContext context) {
     return Row(
       children: [
         const AppLogo(size: 36),
@@ -136,8 +132,31 @@ class _HomeDashboardState extends State<HomeDashboard>
       ],
     );
   }
+}
 
-  Widget _emptyState(AppController controller) {
+/// Empty/summary card: rebuilds alone when the protected count changes.
+class _SummarySection extends StatelessWidget {
+  const _SummarySection({
+    required this.controller,
+    required this.onManageApps,
+  });
+
+  final AppController controller;
+  final VoidCallback onManageApps;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        return controller.protectedCount == 0
+            ? _emptyState(context)
+            : _summaryCard(context);
+      },
+    );
+  }
+
+  Widget _emptyState(BuildContext context) {
     return BlueLockCard(
       child: Column(
         children: [
@@ -172,14 +191,14 @@ class _HomeDashboardState extends State<HomeDashboard>
           PrimaryButton(
             label: 'Choose apps',
             icon: Icons.apps_outlined,
-            onPressed: widget.onManageApps,
+            onPressed: onManageApps,
           ),
         ],
       ),
     );
   }
 
-  Widget _summaryCard(AppController controller) {
+  Widget _summaryCard(BuildContext context) {
     return BlueLockCard(
       child: Column(
         children: [
@@ -226,14 +245,40 @@ class _HomeDashboardState extends State<HomeDashboard>
           PrimaryButton(
             label: 'Manage Protected Apps',
             icon: Icons.apps_outlined,
-            onPressed: widget.onManageApps,
+            onPressed: onManageApps,
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _statusCard(AppController controller) {
+/// Status card + permission banner: rebuilds alone on permission changes.
+class _StatusSection extends StatelessWidget {
+  const _StatusSection({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _statusCard(context),
+            if (!controller.permissionsGranted) ...[
+              const SizedBox(height: 14),
+              _setupBanner(context),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _statusCard(BuildContext context) {
     return BlueLockCard(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Column(
@@ -350,7 +395,7 @@ class _HomeDashboardState extends State<HomeDashboard>
     );
   }
 
-  Widget _setupBanner(AppController controller) {
+  Widget _setupBanner(BuildContext context) {
     return BlueLockCard(
       child: Row(
         children: [
@@ -384,8 +429,13 @@ class _HomeDashboardState extends State<HomeDashboard>
       ),
     );
   }
+}
 
-  Widget _tipCard() {
+class _TipCard extends StatelessWidget {
+  const _TipCard();
+
+  @override
+  Widget build(BuildContext context) {
     return BlueLockCard(
       child: Row(
         children: [

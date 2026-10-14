@@ -17,16 +17,29 @@ import androidx.core.app.NotificationCompat
 
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
+import android.os.HandlerThread
 import android.os.SystemClock
 
 /**
  * Foreground service that polls UsageStatsManager for the current foreground
  * app and launches [LockActivity] when a protected app opens without a valid
  * unlock session.
+ *
+ * The poll itself runs on a dedicated background thread ([pollThread]): the
+ * UsageStatsManager query plus SharedPreferences reads/writes used to run on
+ * the Android main thread every 400ms, competing with input dispatch and
+ * platform-channel work while Blue Lock was being used. All logic and timing
+ * are unchanged; anything that must touch the UI (starting LockActivity,
+ * stopSelf) is posted back to the main thread.
  */
 class AppLockService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
+
+    private var pollThread: HandlerThread? = null
+    private var pollHandler: Handler? = null
+
+    @Volatile
     private var lastForeground: String? = null
 
     private val screenOffReceiver = object : BroadcastReceiver() {
@@ -42,8 +55,12 @@ class AppLockService : Service() {
 
     private val poll = object : Runnable {
         override fun run() {
-            checkForeground()
-            handler.postDelayed(this, POLL_MS)
+            try {
+                checkForeground()
+            } catch (e: Exception) {
+                Log.w(TAG, "poll failed", e)
+            }
+            pollHandler?.postDelayed(this, POLL_MS)
         }
     }
 
@@ -51,14 +68,36 @@ class AppLockService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        reconcileStateOnStart()
+        val thread = HandlerThread("bluelock-poll").apply { start() }
+        pollThread = thread
+        pollHandler = Handler(thread.looper)
+        // Reconcile and the poll loop run on the poll thread, in order.
+        val ph = pollHandler!!
+        ph.post {
+            try {
+                reconcileStateOnStart()
+            } catch (e: Exception) {
+                Log.w(TAG, "reconcile failed", e)
+            }
+        }
         try {
             registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
         } catch (e: Exception) {
             Log.w(TAG, "Could not register screenOffReceiver", e)
         }
         startAsForeground()
-        handler.post(poll)
+        // Pre-warm the lock screen's Flutter engine once per process, off the
+        // authentication path. By the time a protected app is opened the
+        // engine is booted and LockActivity can attach it instantly instead
+        // of paying a full engine cold start on the critical path.
+        handler.post {
+            try {
+                LockEngineCache.warm(applicationContext)
+            } catch (e: Exception) {
+                Log.w(TAG, "engine warm failed - lock will cold-boot", e)
+            }
+        }
+        ph.post(poll)
     }
 
     private fun reconcileStateOnStart() {
@@ -117,7 +156,10 @@ class AppLockService : Service() {
     }
 
     override fun onDestroy() {
-        handler.removeCallbacks(poll)
+        pollHandler?.removeCallbacksAndMessages(null)
+        pollHandler = null
+        pollThread?.quitSafely()
+        pollThread = null
         try {
             unregisterReceiver(screenOffReceiver)
         } catch (_: Exception) {}
@@ -168,7 +210,7 @@ class AppLockService : Service() {
 
     private fun checkForeground() {
         if (!shouldRun()) {
-            stopSelf()
+            handler.post { stopSelf() }
             return
         }
         val t0 = SystemClock.elapsedRealtime()
@@ -222,6 +264,19 @@ class AppLockService : Service() {
             return
         }
 
+        // startActivity is async: before the activity's onCreate runs
+        // (isShowing=true) the next poll can still see the protected app in
+        // the foreground and launch a duplicate. A fresh pending mark
+        // suppresses that; stale marks (>2s, activity never came up) fall
+        // through and relaunch.
+        val pendingSince = LockActivity.launchPendingSince
+        if (pendingSince != 0L &&
+            SystemClock.elapsedRealtime() - pendingSince < LAUNCH_PENDING_TIMEOUT_MS
+        ) {
+            Log.d(TAG, "lock launch already in flight for $fg - skipping duplicate")
+            return
+        }
+
         Log.d(TAG, "$fg is protected and locked - launching LockActivity (elapsed: ${SystemClock.elapsedRealtime() - t0}ms)")
         showLock(fg)
     }
@@ -235,6 +290,7 @@ class AppLockService : Service() {
         // signature. The protection requirement (re-authentication on re-open)
         // is met by session invalidation in checkForeground().
         val launchTime = SystemClock.elapsedRealtime()
+        LockActivity.launchPendingSince = launchTime
         Log.d(TAG, "starting LockActivity for $packageName at $launchTime")
         val intent = Intent(this, LockActivity::class.java).apply {
             putExtra(LockActivity.EXTRA_PACKAGE, packageName)
@@ -247,13 +303,19 @@ class AppLockService : Service() {
                     Intent.FLAG_ACTIVITY_SINGLE_TOP
             )
         }
-        startActivity(intent)
+        startActivitySafe(intent)
+    }
+
+    /** [startActivity] is dispatched on the main thread (poll runs off it). */
+    private fun startActivitySafe(intent: Intent) {
+        handler.post { startActivity(intent) }
     }
 
     companion object {
         private const val TAG = "BlueLock"
         private const val POLL_MS = 400L
         private const val NOTIFICATION_ID = 5100
+        private const val LAUNCH_PENDING_TIMEOUT_MS = 2000L
 
         private val systemExcluded = setOf(
             "com.android.systemui",

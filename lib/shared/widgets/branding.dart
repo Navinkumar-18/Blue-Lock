@@ -55,13 +55,21 @@ class AppIconView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bytes = iconBytes;
+    // Decode straight to the on-screen pixel size: icons are displayed at
+    // [size] logical pixels, so decoding the full-resolution PNG and letting
+    // the GPU scale it down wastes decode time and memory for every row.
+    final decodeWidth = (size * MediaQuery.devicePixelRatioOf(context)).round();
     return ClipRRect(
       borderRadius: BorderRadius.circular(size * 0.27),
       child: SizedBox(
         width: size,
         height: size,
         child: bytes != null && bytes.isNotEmpty
-            ? Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true)
+            ? Image(
+                image: ResizeImage(MemoryImage(bytes), width: decodeWidth),
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+              )
             : ColoredBox(
                 color: AppColors.paleBlueSoft,
                 child: Center(
