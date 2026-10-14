@@ -6,6 +6,7 @@ import '../../installed_apps/models/installed_app.dart';
 import '../../installed_apps/services/apps_repository.dart';
 import '../services/biometric_status.dart';
 import '../services/lock_session.dart';
+import '../../../core/utils/perf_log.dart';
 import '../../../shared/widgets/pin_entry_panel.dart';
 
 /// Screen G: authentication screen shown when a protected app is opened.
@@ -46,6 +47,11 @@ class _AppLockScreenState extends State<AppLockScreen> {
   @override
   void initState() {
     super.initState();
+    PerfLog.mark('lock: initState for ${widget.packageName}');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      PerfLog.mark('lock: first frame rendered (PIN usable)');
+      LockSession.markUsable();
+    });
     _loadApp();
     _initBiometric();
   }

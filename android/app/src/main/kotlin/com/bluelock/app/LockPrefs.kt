@@ -24,9 +24,12 @@ object LockPrefs {
         prefs(context).edit().putBoolean("lock_enabled", enabled).apply()
     }
 
-    /** 0 = immediately after leaving the app; otherwise seconds. */
+    /** 0 = immediately after leaving the app; otherwise seconds.
+     *  Default is 0 so a fresh install / cleared prefs still locks
+     *  immediately rather than silently granting a 30-second window.
+     */
     fun relockTimeout(context: Context): Int =
-        prefs(context).getInt("relock_timeout", 30)
+        prefs(context).getInt("relock_timeout", 0)
 
     fun setRelockTimeout(context: Context, seconds: Int) {
         prefs(context).edit().putInt("relock_timeout", seconds).apply()
@@ -96,5 +99,25 @@ object LockPrefs {
 
     fun resetAll(context: Context) {
         prefs(context).edit().clear().apply()
+    }
+
+    fun getLastForeground(context: Context): String? =
+        prefs(context).getString("svc_last_fg", null)
+
+    fun setLastForeground(context: Context, pkg: String?) {
+        val editor = prefs(context).edit()
+        if (pkg == null) {
+            editor.remove("svc_last_fg")
+        } else {
+            editor.putString("svc_last_fg", pkg)
+        }
+        editor.apply()
+    }
+
+    fun getLastPollTime(context: Context): Long =
+        prefs(context).getLong("svc_last_poll_time", 0L)
+
+    fun setLastPollTime(context: Context, timeMs: Long) {
+        prefs(context).edit().putLong("svc_last_poll_time", timeMs).apply()
     }
 }

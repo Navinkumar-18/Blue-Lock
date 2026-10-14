@@ -15,4 +15,10 @@
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
+    <!-- Theme applied to LockActivity starting window: matches Flutter lock
+         screen background to avoid white/black visual flash. -->
+    <style name="LockTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@drawable/lock_background</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>

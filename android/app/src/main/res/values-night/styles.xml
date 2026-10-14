@@ -15,4 +15,9 @@
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
+    <!-- Night theme for LockActivity starting window: matches dark lock screen background (#0F172A). -->
+    <style name="LockTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">@drawable/lock_background</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>

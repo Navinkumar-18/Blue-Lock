@@ -11,6 +11,8 @@ class BootReceiver : BroadcastReceiver() {
             // Foreground-only unlock sessions do not survive a reboot: the
             // protected app is no longer in the foreground.
             LockPrefs.clearForegroundOnlySessions(context)
+            LockPrefs.setLastForeground(context, null)
+            LockPrefs.setLastPollTime(context, 0L)
             AppLockService.ensureRunning(context)
         }
     }

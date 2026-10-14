@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -35,11 +36,15 @@ class LockActivity : FlutterFragmentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val launchTime = intent.getLongExtra(EXTRA_LAUNCH_TIME, 0L)
+        val t0 = SystemClock.elapsedRealtime()
         lockedPackage = intent.getStringExtra(EXTRA_PACKAGE)
         isShowing = true
         showingPackage = lockedPackage
         Log.d(TAG, "onCreate: showing lock screen for $lockedPackage")
         super.onCreate(savedInstanceState)
+        val elapsedFromLaunch = if (launchTime > 0) SystemClock.elapsedRealtime() - launchTime else -1
+        Log.i(TAG, "PERF: LockActivity.onCreate done: ${SystemClock.elapsedRealtime() - t0}ms (total from service: ${elapsedFromLaunch}ms)")
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -51,6 +56,15 @@ class LockActivity : FlutterFragmentActivity() {
             // A different protected app came to the front: rebuild so the
             // engine boots with the lock/<new package> route.
             recreate()
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        val launchTime = intent.getLongExtra(EXTRA_LAUNCH_TIME, 0L)
+        if (hasFocus && launchTime > 0) {
+            val total = SystemClock.elapsedRealtime() - launchTime
+            Log.i(TAG, "PERF: LockActivity window focused at ${total}ms from service trigger")
         }
     }
 
@@ -109,6 +123,16 @@ class LockActivity : FlutterFragmentActivity() {
                 }
                 "authenticateBiometric" ->
                     authenticateBiometric(call.arguments, result)
+                "markUsable" -> {
+                    val launchTime = intent.getLongExtra(EXTRA_LAUNCH_TIME, 0L)
+                    if (launchTime > 0) {
+                        val total = SystemClock.elapsedRealtime() - launchTime
+                        Log.i(TAG, "PERF: First usable lock screen UI reached in ${total}ms from launch")
+                    } else {
+                        Log.i(TAG, "PERF: First usable lock screen UI reached")
+                    }
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -156,6 +180,7 @@ class LockActivity : FlutterFragmentActivity() {
 
     companion object {
         const val EXTRA_PACKAGE = "package"
+        const val EXTRA_LAUNCH_TIME = "launch_time"
         private const val TAG = "BlueLock"
 
         @Volatile

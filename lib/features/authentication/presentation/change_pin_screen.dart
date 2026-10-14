@@ -16,11 +16,11 @@ class ChangePinScreen extends StatefulWidget {
 }
 
 class _ChangePinScreenState extends State<ChangePinScreen> {
-  final _panelKey = GlobalKey<PinEntryPanelState>();
   _Step _step = _Step.verifyCurrent;
   String? _currentPin;
   String? _newPin;
   bool _busy = false;
+  String? _error;
 
   String get _heading => switch (_step) {
         _Step.verifyCurrent => 'Enter current PIN',
@@ -45,46 +45,63 @@ class _ChangePinScreenState extends State<ChangePinScreen> {
     if (_busy) return;
     switch (_step) {
       case _Step.verifyCurrent:
-        setState(() => _busy = true);
-        bool ok;
+        setState(() {
+          _busy = true;
+          _error = null;
+        });
+        bool ok = false;
         try {
           ok = await widget.pinService.verifyPin(pin);
         } catch (_) {
           if (!mounted) return;
-          setState(() => _busy = false);
-          _panelKey.currentState
-              ?.showError('Could not verify your PIN. Try again.');
+          setState(() {
+            _busy = false;
+            _error = 'Could not verify your PIN. Please try again.';
+          });
           return;
         }
         if (!mounted) return;
-        setState(() {
-          _busy = false;
-          if (ok) {
+        if (ok) {
+          setState(() {
+            _busy = false;
             _currentPin = pin;
             _step = _Step.newPin;
-            _panelKey.currentState?.clear();
-          }
-        });
-        if (!ok) {
-          _panelKey.currentState?.showError('Incorrect PIN. Try again.');
+            _error = null;
+          });
+        } else {
+          setState(() {
+            _busy = false;
+            _error = 'Incorrect PIN. Try again.';
+          });
         }
+
       case _Step.newPin:
         if (_currentPin != null && pin == _currentPin) {
-          _panelKey.currentState
-              ?.showError('New PIN must be different from the current PIN.');
+          setState(() {
+            _busy = false;
+            _error = 'New PIN must be different from the current PIN.';
+          });
           return;
         }
         setState(() {
+          _busy = false;
           _newPin = pin;
           _step = _Step.confirmNew;
-          _panelKey.currentState?.clear();
+          _error = null;
         });
+
       case _Step.confirmNew:
         if (pin != _newPin) {
-          _panelKey.currentState?.showError("PINs don't match. Try again.");
+          setState(() {
+            _busy = false;
+            _error = "PINs don't match. Try again.";
+          });
           return;
         }
-        setState(() => _busy = true);
+        setState(() {
+          _busy = true;
+          _error = null;
+        });
         try {
           await widget.pinService.changePin(
             currentPin: _currentPin!,
@@ -100,14 +117,18 @@ class _ChangePinScreenState extends State<ChangePinScreen> {
           Navigator.of(context).pop(true);
         } on PinException catch (e) {
           if (!mounted) return;
-          setState(() => _busy = false);
-          _panelKey.currentState?.showError(e.message);
+          setState(() {
+            _busy = false;
+            _error = e.message;
+          });
         } catch (_) {
-          // Storage failure while persisting the new verifier.
+          // Storage or crypto failure while persisting the new verifier.
+          // Never report success if persistence fails. Always restore busy state.
           if (!mounted) return;
-          setState(() => _busy = false);
-          _panelKey.currentState
-              ?.showError('Could not save your PIN. Please try again.');
+          setState(() {
+            _busy = false;
+            _error = 'Could not save your PIN. Please try again.';
+          });
         }
     }
   }
@@ -124,10 +145,14 @@ class _ChangePinScreenState extends State<ChangePinScreen> {
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
           child: PinEntryPanel(
-            key: _panelKey,
+            key: ValueKey(_step),
             heading: _heading,
             description: _description,
             actionLabel: _actionLabel,
+            errorText: _error,
+            onInputChanged: (_) {
+              if (_error != null) setState(() => _error = null);
+            },
             onCompleted: _onCompleted,
           ),
         ),

@@ -76,4 +76,16 @@ class LockSession {
       }
     }
   }
+
+  /// Records that the first usable authentication screen is displayed.
+  /// Native LockActivity logs the total elapsed time from the trigger.
+  static Future<void> markUsable() async {
+    try {
+      await channel.invokeMethod('markUsable');
+    } on MissingPluginException {
+      // Ignored outside lock activity.
+    } on PlatformException {
+      // Ignored.
+    }
+  }
 }

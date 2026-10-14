@@ -93,7 +93,7 @@ object NativeBridge {
                 result.success(null)
             }
             "setRelockTimeout" -> {
-                LockPrefs.setRelockTimeout(context, (arguments as? Int) ?: 30)
+                LockPrefs.setRelockTimeout(context, (arguments as? Int) ?: 0)
                 result.success(null)
             }
             "lockPackage" -> {

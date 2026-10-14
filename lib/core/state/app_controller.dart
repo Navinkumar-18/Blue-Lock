@@ -49,7 +49,7 @@ class AppController extends ChangeNotifier {
   final PermissionsService permissions;
 
   Set<String> lockedPackages = <String>{};
-  int relockTimeoutSeconds = 30;
+  int relockTimeoutSeconds = 0;
   bool _lockEnabled = true;
   bool onboardingDone = false;
 

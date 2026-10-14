@@ -17,14 +17,20 @@ Future<void> main() async {
   );
   await controller.init();
 
-  // Mirror current configuration to the native lock service so protection
-  // survives process restarts.
-  await controller.native.setProtectedPackages(
-    controller.lockedPackages.toList(),
-  );
-  await controller.native.setLockEnabled(controller.lockEnabled);
-  await controller.native.setRelockTimeout(controller.relockTimeoutSeconds);
-  await controller.native.setBiometricEnabled(controller.biometricEnabled);
+  final defaultRoute =
+      WidgetsBinding.instance.platformDispatcher.defaultRouteName;
+  final isLockRoute =
+      defaultRoute.startsWith('lock/') || defaultRoute.startsWith('/lock/');
+  if (!isLockRoute) {
+    // Mirror current configuration to the native lock service so protection
+    // survives process restarts.
+    await controller.native.setProtectedPackages(
+      controller.lockedPackages.toList(),
+    );
+    await controller.native.setLockEnabled(controller.lockEnabled);
+    await controller.native.setRelockTimeout(controller.relockTimeoutSeconds);
+    await controller.native.setBiometricEnabled(controller.biometricEnabled);
+  }
 
   runApp(BlueLockApp(controller: controller));
 }

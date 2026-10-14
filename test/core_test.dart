@@ -15,7 +15,7 @@ void main() {
     await storage.init();
     expect(storage.onboardingDone, isFalse);
     expect(storage.lockEnabled, isTrue);
-    expect(storage.relockTimeoutSeconds, 30);
+    expect(storage.relockTimeoutSeconds, 0);
     expect(storage.lockedPackages, isEmpty);
     expect(await storage.hasPin(), isFalse);
   });

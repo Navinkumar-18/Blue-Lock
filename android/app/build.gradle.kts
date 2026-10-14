@@ -49,6 +49,7 @@ kotlin {
 dependencies {
     // System biometric prompt for the lock screen (fingerprint/face).
     implementation("androidx.biometric:biometric:1.1.0")
+    testImplementation("junit:junit:4.13.2")
 }
 
 flutter {

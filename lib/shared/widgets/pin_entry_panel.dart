@@ -43,6 +43,15 @@ class PinEntryPanelState extends State<PinEntryPanel> {
 
   String get pin => _pin;
 
+  @override
+  void didUpdateWidget(covariant PinEntryPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.errorText != null && widget.errorText != oldWidget.errorText) {
+      _pin = '';
+      _localError = null;
+    }
+  }
+
   void clear() {
     setState(() {
       _pin = '';

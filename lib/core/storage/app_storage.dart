@@ -89,7 +89,8 @@ class AppStorage {
   Future<void> setLockedPackages(List<String> packages) =>
       prefs.setStringList(_kLockedPackages, packages);
 
-  int get relockTimeoutSeconds => prefs.getInt(_kRelockTimeout) ?? 30;
+  // Default 0 = "Immediately after leaving an app", matching the native side.
+  int get relockTimeoutSeconds => prefs.getInt(_kRelockTimeout) ?? 0;
 
   Future<void> setRelockTimeoutSeconds(int seconds) =>
       prefs.setInt(_kRelockTimeout, seconds);
