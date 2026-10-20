@@ -11,6 +11,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Lets Blue Lock ask the user (via a system dialog) to exempt it from
+         battery optimization. Required for 24/7 foreground-app detection on
+         most OEMs; the user always confirms in the system dialog. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Optional: display-over-other-apps (not required by the Activity-based lock). -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
@@ -65,8 +69,17 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- Recovery after system update / adb install -r: the update
+                     kills the process and Android does not restart foreground
+                     services by itself. -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+        <!-- Alarm-based watchdog that restarts AppLockService after OEM kills
+             that defeat START_STICKY. Explicit-intent alarm target only. -->
+        <receiver
+            android:name=".ServiceWatchdogReceiver"
+            android:exported="false" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

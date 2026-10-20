@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
@@ -86,6 +87,35 @@ class NativeBridge {
 
   Future<void> openOverlaySettings() => _invoke<void>('openOverlaySettings');
 
+  // ---- background-keepalive permissions (battery, notifications) ----
+
+  /// Android 13+: whether the protection notification can be shown.
+  Future<bool> hasNotificationPermission() async =>
+      await _invoke<bool>('hasNotificationPermission') ?? true;
+
+  /// Android 13+: shows the system notification-permission dialog.
+  Future<void> requestNotificationPermission() =>
+      _invoke<void>('requestNotificationPermission');
+
+  /// Whether Blue Lock is exempted from battery optimization. Without the
+  /// exemption most OEMs (including Motorola) throttle or kill background
+  /// services over time, which is what previously stopped protection after
+  /// roughly a day.
+  Future<bool> isIgnoringBatteryOptimizations() async =>
+      await _invoke<bool>('isIgnoringBatteryOptimizations') ?? false;
+
+  /// Opens the system "allow unrestricted battery" confirmation dialog.
+  Future<void> requestIgnoreBatteryOptimizations() =>
+      _invoke<void>('requestIgnoreBatteryOptimizations');
+
+  /// Battery-optimization list (fallback when the direct dialog is blocked).
+  Future<void> openBatteryOptimizationSettings() =>
+      _invoke<void>('openBatteryOptimizationSettings');
+
+  /// App-details page: where Motorola exposes
+  /// "Battery usage -> Let it run in the background / Unrestricted".
+  Future<void> openAppSettings() => _invoke<void>('openAppSettings');
+
   Future<void> setProtectedPackages(List<String> packages) =>
       _invoke<void>('setProtectedPackages', packages);
 
@@ -145,13 +175,22 @@ class NativeBridge {
   ///  - 'user_cancel' user dismissed the prompt / chose PIN
   ///  - 'unavailable' no biometrics, busy, or running outside Android
   ///  - 'failed'      any other platform error (never treated as success)
+  /// Outer bound for one system-prompt round trip so a platform hang can
+  /// never leave the biometric button disabled forever (native answers every
+  /// request itself via callback, watchdog or host teardown).
+  static const Duration _biometricCallTimeout = Duration(seconds: 75);
+
   Future<String> authenticateBiometricSelf({required String label}) async {
     try {
-      final ok = await channel.invokeMethod<bool>('authenticateBiometric', {
-        'package': 'com.bluelock.app',
-        'label': label,
-      });
+      final ok = await channel
+          .invokeMethod<bool>('authenticateBiometric', {
+            'package': 'com.bluelock.app',
+            'label': label,
+          })
+          .timeout(_biometricCallTimeout);
       return ok == true ? 'success' : 'failed';
+    } on TimeoutException {
+      return 'failed';
     } on MissingPluginException {
       available = false;
       return 'unavailable';

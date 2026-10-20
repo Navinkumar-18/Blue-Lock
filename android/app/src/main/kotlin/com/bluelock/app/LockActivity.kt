@@ -1,9 +1,12 @@
 package com.bluelock.app
 
+import android.content.Context
 import android.content.Intent
+import android.app.KeyguardManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.view.WindowManager
@@ -35,8 +38,6 @@ class LockActivity : FlutterFragmentActivity() {
     var lockedPackage: String? = null
         private set
 
-    private var biometricPrompt: androidx.biometric.BiometricPrompt? = null
-    private var biometricActive = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /** elapsedRealtime of the service's launch trigger, if provided. */
@@ -79,7 +80,8 @@ class LockActivity : FlutterFragmentActivity() {
         val cached = LockEngineCache.isReady
         Log.d(
             TAG,
-            "onCreate: showing lock screen for $lockedPackage (cachedEngine=$cached)"
+            "onCreate: showing lock screen for $lockedPackage " +
+                "(cachedEngine=$cached recreated=${savedInstanceState != null})"
         )
         super.onCreate(savedInstanceState)
         if (cached) {
@@ -124,6 +126,11 @@ class LockActivity : FlutterFragmentActivity() {
     }
 
     override fun onDestroy() {
+        // Release any in-flight biometric session owned by this activity.
+        // AndroidX resets its client callback on host destroy, so without
+        // this the pending channel reply (and the process-wide latch) would
+        // be dropped and the Flutter side would wait forever.
+        BiometricAuth.abandon(this, "LockActivity destroyed")
         isShowing = false
         showingPackage = null
         if (LockEngineCache.currentActivity?.get() === this) {
@@ -142,12 +149,31 @@ class LockActivity : FlutterFragmentActivity() {
         super.onStop()
         // The user left the protected app (home / recents) - dismiss the lock
         // screen; the session was never granted. Stay alive while the system
-        // biometric prompt is on screen (own prompt on the cold path, the
-        // cached engine's prompt on the warm path).
-        if (!biometricActive && !LockEngineCache.isBiometricActive) {
-            Log.d(TAG, "onStop without active biometric - finishing")
-            finish()
+        // biometric prompt is on screen (any host path shares one session).
+        if (BiometricAuth.isActive) {
+            return
         }
+        // Device hidden: screen off or keyguard up. The user sees and can
+        // interact with nothing right now, so finishing would only make the
+        // service launch this lock again on its next 400ms tick - and it
+        // would stop immediately again, looping for as long as the device
+        // stays hidden. Keep the lock alive instead: it resumes the moment
+        // the device becomes visible, still unauthenticated.
+        if (userCannotSeeUs()) {
+            Log.d(TAG, "onStop while device hidden (screen off/keyguard) - keeping lock")
+            return
+        }
+        Log.d(TAG, "onStop without active biometric - finishing")
+        finish()
+    }
+
+    /** True when the screen is off or the keyguard currently covers us. */
+    private fun userCannotSeeUs(): Boolean {
+        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!power.isInteractive) return true
+        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        @Suppress("DEPRECATION")
+        return keyguard.isKeyguardLocked
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -220,33 +246,32 @@ class LockActivity : FlutterFragmentActivity() {
             result.error("bad_args", "package required", null)
             return
         }
-        if (biometricActive) {
-            result.error("busy", "Biometric prompt already showing", null)
-            return
-        }
-        if (!BiometricAuth.canAuthenticate(this)) {
-            Log.d(TAG, "authenticateBiometric: no enrolled biometrics")
-            result.error("unavailable", "No enrolled biometrics", null)
-            return
-        }
         val args = arguments as? Map<*, *>
         val label = args?.get("label") as? String ?: pkg
-        biometricActive = true
-        Log.d(TAG, "launching system biometric prompt for $pkg")
-        biometricPrompt = BiometricAuth.showPrompt(
-            activity = this,
-            title = "Blue Lock",
-            subtitle = "Authenticate to open $label"
-        ) { outcome, detail ->
-            biometricActive = false
-            biometricPrompt = null
-            Log.d(TAG, "biometric outcome=$outcome for $pkg")
-            when {
-                outcome == "success" -> result.success(true)
-                outcome == "user_cancel" ->
-                    result.error("user_cancel", detail, null)
-                else -> result.error("auth_failed", detail, null)
+        when (
+            BiometricAuth.start(
+                activity = this,
+                title = "Blue Lock",
+                subtitle = "Authenticate to open $label"
+            ) { outcome, detail ->
+                Log.d(TAG, "biometric outcome=$outcome for $pkg")
+                when {
+                    outcome == "success" -> result.success(true)
+                    outcome == "user_cancel" ->
+                        result.error("user_cancel", detail, null)
+                    else -> result.error("auth_failed", detail, null)
+                }
             }
+        ) {
+            BiometricAuth.Start.READY -> {
+                Log.d(TAG, "launching system biometric prompt for $pkg")
+            }
+            BiometricAuth.Start.BUSY ->
+                result.error("busy", "Biometric prompt already showing", null)
+            BiometricAuth.Start.HOST_NOT_READY ->
+                result.error("unavailable", "Lock screen not active", null)
+            BiometricAuth.Start.NO_BIOMETRICS ->
+                result.error("unavailable", "No enrolled biometrics", null)
         }
     }
 

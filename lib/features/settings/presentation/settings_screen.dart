@@ -356,6 +356,41 @@ class _PermissionsSection extends StatelessWidget {
                 ),
               ),
               const Divider(),
+              if (controller.permissions.batteryGuidanceRelevant)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text(
+                    'Battery & Background',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      StatusPill(
+                        label: controller.batteryOptimizationIgnored &&
+                                controller.notificationPermission
+                            ? 'Ready'
+                            : 'Review',
+                        tone: controller.batteryOptimizationIgnored &&
+                                controller.notificationPermission
+                            ? StatusTone.success
+                            : StatusTone.warning,
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.chevron_right,
+                          size: 20, color: AppColors.textSecondary),
+                    ],
+                  ),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => PermissionsScreen(controller: controller),
+                    ),
+                  ),
+                ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text(

@@ -53,6 +53,25 @@ class _PermissionsScreenState extends State<PermissionsScreen>
     await widget.controller.permissions.openOverlaySettings();
   }
 
+  Future<void> _requestNotifications() async {
+    await widget.controller.permissions.requestNotificationPermission();
+    // Re-check on return from the system dialog.
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (mounted) await widget.controller.refreshPermissions();
+  }
+
+  Future<void> _requestBatteryExemption() async {
+    await widget.controller.permissions.requestIgnoreBatteryOptimizations();
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (mounted) await widget.controller.refreshPermissions();
+  }
+
+  Future<void> _openAppSettings() async {
+    await widget.controller.permissions.openAppSettings();
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (mounted) await widget.controller.refreshPermissions();
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
@@ -114,6 +133,48 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                   actionLabel: 'Open settings',
                   onAction: _openOverlay,
                 ),
+                if (controller.permissions.batteryGuidanceRelevant) ...[
+                  const SizedBox(height: 14),
+                  PermissionRow(
+                    title: 'Notifications',
+                    description:
+                        'Shows the persistent "Protecting your apps" '
+                        'notification so you can always see that protection '
+                        'is active. Android 13 and newer require your '
+                        'permission to display it.',
+                    granted: controller.notificationPermission,
+                    grantedLabel: 'Granted',
+                    missingLabel: 'Recommended',
+                    missingTone: StatusTone.warning,
+                    actionLabel: controller.notificationPermission
+                        ? 'Open settings'
+                        : 'Allow notifications',
+                    onAction: controller.notificationPermission
+                        ? _openAppSettings
+                        : _requestNotifications,
+                  ),
+                  const SizedBox(height: 14),
+                  PermissionRow(
+                    title: 'Unrestricted Battery',
+                    description:
+                        'Lets Blue Lock keep protecting your apps while in '
+                        'the background. Without this, phone makers\u2019 '
+                        'battery manager (e.g. Motorola) can stop protection '
+                        'after some hours. Also set "Battery usage -> '
+                        'Unrestricted" for Blue Lock in your phone\u2019s '
+                        'settings if this dialog is unavailable.',
+                    granted: controller.batteryOptimizationIgnored,
+                    grantedLabel: 'Unrestricted',
+                    missingLabel: 'Restricted',
+                    missingTone: StatusTone.danger,
+                    actionLabel: controller.batteryOptimizationIgnored
+                        ? 'Open settings'
+                        : 'Allow in background',
+                    onAction: controller.batteryOptimizationIgnored
+                        ? _openAppSettings
+                        : _requestBatteryExemption,
+                  ),
+                ],
                 const SizedBox(height: 22),
                 PrimaryButton(
                   label: _checking ? 'Checking...' : 'Re-check permissions',

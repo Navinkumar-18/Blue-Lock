@@ -60,6 +60,8 @@ class AppController extends ChangeNotifier {
 
   bool usageAccess = false;
   bool overlayPermission = false;
+  bool notificationPermission = true;
+  bool batteryOptimizationIgnored = true;
 
   // Biometric unlock: device capability (available/enrolled) + user pref.
   BiometricStatus biometric = BiometricStatus.unavailable;
@@ -151,6 +153,9 @@ class AppController extends ChangeNotifier {
   Future<void> refreshPermissions() async {
     usageAccess = await permissions.hasUsageAccess();
     overlayPermission = await permissions.hasOverlayPermission();
+    notificationPermission = await permissions.hasNotificationPermission();
+    batteryOptimizationIgnored =
+        await permissions.isIgnoringBatteryOptimizations();
     notifyListeners();
   }
 

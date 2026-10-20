@@ -52,10 +52,20 @@ class _SelfLockScreenState extends State<SelfLockScreen> {
     if (!_biometric.canUse) return;
     if (auto) _autoPrompted = true;
     setState(() => _biometricPromptActive = true);
-    final outcome = await widget.controller.native
-        .authenticateBiometricSelf(label: 'Blue Lock');
+    var outcome = 'failed';
+    try {
+      outcome = await widget.controller.native
+          .authenticateBiometricSelf(label: 'Blue Lock');
+    } catch (_) {
+      // Defensive: an unexpected bridge failure is treated like a failed
+      // attempt (PIN keypad stays), never like a pass.
+    } finally {
+      // Re-arm the button whatever happens, so a lost/late reply can never
+      // leave "Unlock with biometrics" permanently disabled.
+      _biometricPromptActive = false;
+    }
     if (!mounted) return;
-    setState(() => _biometricPromptActive = false);
+    setState(() {}); // rebuild: button enabled again
     if (_unlocked) return;
     if (outcome == 'success') {
       await _grant();
@@ -63,10 +73,21 @@ class _SelfLockScreenState extends State<SelfLockScreen> {
     }
     if (outcome == 'user_cancel') return; // user chose the PIN keypad
     // Failure or unavailability: the PIN keypad remains as the fallback.
+    await _reportBiometricNotGranted(outcome);
+  }
+
+  /// Keeps the error message and the biometric button consistent with each
+  /// other: the message is decided by a *fresh* availability check, never by
+  /// the raw error code, so "unavailable" can only ever appear together with
+  /// the button being hidden (and vice versa).
+  Future<void> _reportBiometricNotGranted(String outcome) async {
+    final status = await widget.controller.native.getBiometricStatus();
+    if (!mounted || _unlocked) return;
+    setState(() => _biometric = status);
     _panelKey.currentState?.showError(
-      outcome == 'unavailable'
-          ? 'Biometric unlock unavailable. Enter your PIN.'
-          : 'Biometric unlock failed. Enter your PIN.',
+      status.canUse
+          ? 'Biometric unlock failed. Enter your PIN.'
+          : 'Biometric unlock unavailable. Enter your PIN.',
     );
   }
 

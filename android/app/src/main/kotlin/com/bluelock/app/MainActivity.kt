@@ -31,4 +31,12 @@ class MainActivity : FlutterFragmentActivity() {
         // Keep the protection service alive while the user interacts with us.
         AppLockService.ensureRunning(applicationContext)
     }
+
+    override fun onDestroy() {
+        // Release a self-auth biometric session this activity owns; AndroidX
+        // drops its callback on host destroy and would otherwise leave the
+        // process-wide prompt latch stuck for the next attempt.
+        BiometricAuth.abandon(this, "MainActivity destroyed")
+        super.onDestroy()
+    }
 }

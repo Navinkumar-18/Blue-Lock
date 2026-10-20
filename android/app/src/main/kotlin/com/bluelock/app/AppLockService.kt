@@ -25,12 +25,25 @@ import android.os.SystemClock
  * app and launches [LockActivity] when a protected app opens without a valid
  * unlock session.
  *
- * The poll itself runs on a dedicated background thread ([pollThread]): the
- * UsageStatsManager query plus SharedPreferences reads/writes used to run on
- * the Android main thread every 400ms, competing with input dispatch and
- * platform-channel work while Blue Lock was being used. All logic and timing
- * are unchanged; anything that must touch the UI (starting LockActivity,
- * stopSelf) is posted back to the main thread.
+ * Reliability model (why the pieces below exist):
+ *  - The poll runs on a dedicated [HandlerThread], fully native - no Flutter
+ *    screen or Dart timer is ever required for protection.
+ *  - START_STICKY + [ServiceWatchdogReceiver] recover from process kills.
+ *    START_STICKY alone is not enough: Android denies sticky restarts after
+ *    OEM force-stop / restricted-standby kills (common on Motorola devices),
+ *    which is exactly the "stops working after ~24h until Blue Lock is
+ *    opened" failure this service previously had. The watchdog alarm re-checks
+ *    liveness every [WATCHDOG_INTERVAL_MS] and restarts the service; the
+ *    alarm broadcast also grants a temporary background-start allowlist.
+ *  - A main-thread watchdog restarts the poll thread if it ever stalls or
+ *    dies ([STALL_TIMEOUT_MS] without a tick), so a Throwable on the poll
+ *    path can no longer silently disable protection.
+ *  - Usage Access is re-verified periodically (cheap AppOps check); on loss
+ *    the user is notified loudly instead of protection dying invisibly.
+ *  - Poll rate adapts to screen state: [POLL_MS_ON] while the screen is on
+ *    (when locking matters), [POLL_MS_OFF] while it is off; a screen-on
+ *    broadcast triggers an immediate poll so the first unlock is caught
+ *    without waiting out the slow interval.
  */
 class AppLockService : Service() {
 
@@ -42,13 +55,41 @@ class AppLockService : Service() {
     @Volatile
     private var lastForeground: String? = null
 
-    private val screenOffReceiver = object : BroadcastReceiver() {
+    /** Heartbeat of the poll loop, read by the main-thread watchdog. */
+    @Volatile
+    private var lastTickElapsed: Long = 0L
+
+    /** Throttle for the svc_last_poll_time preference write. */
+    @Volatile
+    private var lastPollPersistedAt: Long = 0L
+
+    @Volatile
+    private var screenOn: Boolean = true
+
+    @Volatile
+    private var usageAccessLost: Boolean = false
+
+    private var nullStreak = 0
+    private var ticksSinceAccessCheck = 0L
+
+    private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-                Log.d(TAG, "screen off: clearing foreground-only unlock sessions")
-                LockPrefs.clearForegroundOnlySessions(this@AppLockService)
-                lastForeground = null
-                LockPrefs.setLastForeground(this@AppLockService, null)
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    Log.d(TAG, "screen off: clearing foreground-only unlock sessions")
+                    LockPrefs.clearForegroundOnlySessions(this@AppLockService)
+                    lastForeground = null
+                    LockPrefs.setLastForeground(this@AppLockService, null)
+                    screenOn = false
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    Log.d(TAG, "screen on: immediate poll")
+                    screenOn = true
+                    // Catch the unlock transition immediately instead of
+                    // waiting out the slow screen-off interval.
+                    pollHandler?.removeCallbacks(poll)
+                    pollHandler?.post(poll)
+                }
             }
         }
     }
@@ -57,10 +98,40 @@ class AppLockService : Service() {
         override fun run() {
             try {
                 checkForeground()
-            } catch (e: Exception) {
-                Log.w(TAG, "poll failed", e)
+            } catch (t: Throwable) {
+                // Throwable, not Exception: an Error here previously killed
+                // the poll loop silently and protection stopped until the
+                // process restarted. Log and keep the loop alive.
+                Log.e(TAG, "poll failed with unexpected error", t)
+            } finally {
+                lastTickElapsed = SystemClock.elapsedRealtime()
+                pollHandler?.postDelayed(this, if (screenOn) POLL_MS_ON else POLL_MS_OFF)
             }
-            pollHandler?.postDelayed(this, POLL_MS)
+        }
+    }
+
+    /**
+     * Main-thread stall detector: if the poll thread stopped ticking (looper
+     * wedged, thread died from a native error, etc.) it is torn down and
+     * rebuilt. Cheap: one timestamp comparison every [WATCHDOG_CHECK_MS].
+     */
+    private val pollWatchdog = object : Runnable {
+        override fun run() {
+            try {
+                val thread = pollThread
+                val tick = lastTickElapsed
+                val stalled = thread == null ||
+                    !thread.isAlive ||
+                    (tick != 0L &&
+                        SystemClock.elapsedRealtime() - tick > STALL_TIMEOUT_MS)
+                if (stalled) {
+                    Log.w(TAG, "poll loop stalled (thread=${thread?.isAlive}) - restarting")
+                    restartPollThread()
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "poll watchdog failed", t)
+            }
+            handler.postDelayed(this, WATCHDOG_CHECK_MS)
         }
     }
 
@@ -68,24 +139,27 @@ class AppLockService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        val thread = HandlerThread("bluelock-poll").apply { start() }
-        pollThread = thread
-        pollHandler = Handler(thread.looper)
-        // Reconcile and the poll loop run on the poll thread, in order.
-        val ph = pollHandler!!
-        ph.post {
-            try {
-                reconcileStateOnStart()
-            } catch (e: Exception) {
-                Log.w(TAG, "reconcile failed", e)
-            }
-        }
-        try {
-            registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not register screenOffReceiver", e)
-        }
+        Log.i(TAG, "service onCreate (pid=${android.os.Process.myPid()})")
+        isRunning = true
+        // Call startForeground first thing: every other initialization can
+        // fail without risking the "did not call startForeground()" crash.
         startAsForeground()
+        restartPollThread()
+        try {
+            registerReceiver(
+                screenReceiver,
+                IntentFilter().apply {
+                    addAction(Intent.ACTION_SCREEN_OFF)
+                    addAction(Intent.ACTION_SCREEN_ON)
+                }
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not register screenReceiver", e)
+        }
+        handler.post(pollWatchdog)
+        // Alarm-based watchdog: survives OEM kills that also defeat
+        // START_STICKY. No-op when protection is disabled.
+        ServiceWatchdogReceiver.schedule(applicationContext)
         // Pre-warm the lock screen's Flutter engine once per process, off the
         // authentication path. By the time a protected app is opened the
         // engine is booted and LockActivity can attach it instantly instead
@@ -95,6 +169,25 @@ class AppLockService : Service() {
                 LockEngineCache.warm(applicationContext)
             } catch (e: Exception) {
                 Log.w(TAG, "engine warm failed - lock will cold-boot", e)
+            }
+        }
+    }
+
+    /** (Re)creates the poll thread and starts the loop on it. */
+    private fun restartPollThread() {
+        pollHandler?.removeCallbacksAndMessages(null)
+        pollThread?.quitSafely()
+        val thread = HandlerThread("bluelock-poll").apply { start() }
+        pollThread = thread
+        val ph = Handler(thread.looper)
+        pollHandler = ph
+        lastTickElapsed = SystemClock.elapsedRealtime()
+        // Reconcile and the poll loop run on the poll thread, in order.
+        ph.post {
+            try {
+                reconcileStateOnStart()
+            } catch (e: Exception) {
+                Log.w(TAG, "reconcile failed", e)
             }
         }
         ph.post(poll)
@@ -147,8 +240,15 @@ class AppLockService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.i(
+            TAG,
+            "service onStartCommand flags=$flags startId=$startId " +
+                "stickyRestart=${intent == null}"
+        )
         startAsForeground()
         if (!shouldRun()) {
+            Log.i(TAG, "protection disabled or no protected apps - stopping")
+            ServiceWatchdogReceiver.cancel(applicationContext)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -156,12 +256,15 @@ class AppLockService : Service() {
     }
 
     override fun onDestroy() {
+        Log.i(TAG, "service onDestroy")
+        isRunning = false
+        handler.removeCallbacksAndMessages(null)
         pollHandler?.removeCallbacksAndMessages(null)
         pollHandler = null
         pollThread?.quitSafely()
         pollThread = null
         try {
-            unregisterReceiver(screenOffReceiver)
+            unregisterReceiver(screenReceiver)
         } catch (_: Exception) {}
         super.onDestroy()
     }
@@ -197,34 +300,72 @@ class AppLockService : Service() {
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (t: Throwable) {
+            // Never swallow: a failed startForeground means the system kills
+            // the service in ~5s, so make the failure loudly visible in logs.
+            Log.e(TAG, "startForeground failed", t)
         }
     }
 
     private fun checkForeground() {
         if (!shouldRun()) {
-            handler.post { stopSelf() }
+            handler.post {
+                ServiceWatchdogReceiver.cancel(applicationContext)
+                stopSelf()
+            }
             return
         }
+
+        // Periodic Usage Access verification (cheap AppOps check, not a
+        // usage-events query). Losing Usage Access silently disabled
+        // protection before: currentPackage() just returns null forever.
+        if (++ticksSinceAccessCheck >= ACCESS_CHECK_TICKS) {
+            ticksSinceAccessCheck = 0
+            val granted = NativeBridge.hasUsageAccess(this)
+            if (!granted && !usageAccessLost) {
+                usageAccessLost = true
+                Log.w(TAG, "Usage Access lost - protection cannot detect apps. Notifying user.")
+                notifyUsageAccessLost()
+            } else if (granted && usageAccessLost) {
+                usageAccessLost = false
+                Log.i(TAG, "Usage Access restored - protection resumed")
+                cancelUsageAccessNotification()
+            }
+        }
+
         val t0 = SystemClock.elapsedRealtime()
         val now = System.currentTimeMillis()
-        LockPrefs.setLastPollTime(this, now)
+        // Persist the poll timestamp at most every [POLL_TIME_PERSIST_MS]:
+        // reconcile only needs coarse granularity, and a SharedPreferences
+        // write per tick ran ~216k disk-backed writes per day.
+        if (now - lastPollPersistedAt >= POLL_TIME_PERSIST_MS) {
+            lastPollPersistedAt = now
+            LockPrefs.setLastPollTime(this, now)
+        }
 
         // Missing result: do not update lastForeground or clear sessions.
-        val fg = ForegroundDetector.currentPackage(this) ?: return
+        val fg = ForegroundDetector.currentPackage(this)
+        if (fg == null) {
+            nullStreak++
+            return
+        }
+        nullStreak = 0
         val previous = lastForeground
 
         if (fg != previous) {
             Log.d(TAG, "foreground transition: $previous -> $fg")
             lastForeground = fg
-            // Persist ONLY on meaningful transitions, avoiding 400ms polling churn.
+            // Persist ONLY on meaningful transitions, avoiding polling churn.
             LockPrefs.setLastForeground(this, fg)
 
             val protectedApps = LockPrefs.protectedPackages(this)
@@ -281,6 +422,44 @@ class AppLockService : Service() {
         showLock(fg)
     }
 
+    /** Loud, user-visible signal that protection is currently ineffective. */
+    private fun notifyUsageAccessLost() {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    "bluelock_alerts",
+                    "Protection warnings",
+                    NotificationManager.IMPORTANCE_HIGH
+                )
+            )
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            1,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, "bluelock_alerts")
+            .setContentTitle("Usage Access needed")
+            .setContentText("App protection is paused until you re-grant Usage Access to Blue Lock.")
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+        try {
+            manager.notify(USAGE_NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.w(TAG, "could not post usage-access notification", e)
+        }
+    }
+
+    private fun cancelUsageAccessNotification() {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(USAGE_NOTIFICATION_ID)
+    }
+
     private fun showLock(packageName: String) {
         // Issue 2 – Recents privacy note:
         // Blue Lock cannot remove the protected app's task from Android Recents
@@ -308,14 +487,44 @@ class AppLockService : Service() {
 
     /** [startActivity] is dispatched on the main thread (poll runs off it). */
     private fun startActivitySafe(intent: Intent) {
-        handler.post { startActivity(intent) }
+        handler.post {
+            try {
+                startActivity(intent)
+            } catch (t: Throwable) {
+                // Background-activity-launch restrictions can block this on
+                // some OEM builds; surface it instead of looping blindly.
+                Log.e(TAG, "startActivity(LockActivity) failed", t)
+            }
+        }
     }
 
     companion object {
         private const val TAG = "BlueLock"
-        private const val POLL_MS = 400L
+
+        /** Fast interval: screen on, when locking decisions matter. */
+        private const val POLL_MS_ON = 400L
+
+        /** Slow interval: screen off - no user can open an app right now. */
+        private const val POLL_MS_OFF = 2_000L
+
         private const val NOTIFICATION_ID = 5100
+        private const val USAGE_NOTIFICATION_ID = 5101
         private const val LAUNCH_PENDING_TIMEOUT_MS = 2000L
+
+        /** No poll tick for this long => poll thread is dead, rebuild it. */
+        private const val STALL_TIMEOUT_MS = 15_000L
+        private const val WATCHDOG_CHECK_MS = 30_000L
+
+        /** Usage Access re-check cadence (~60s of screen-on ticks). */
+        private const val ACCESS_CHECK_TICKS = 150L
+
+        /** Coarse persistence granularity for the last-poll timestamp. */
+        private const val POLL_TIME_PERSIST_MS = 10_000L
+
+        /** Process-local liveness flag read by [ServiceWatchdogReceiver]. */
+        @Volatile
+        var isRunning: Boolean = false
+            private set
 
         private val systemExcluded = setOf(
             "com.android.systemui",
@@ -329,22 +538,29 @@ class AppLockService : Service() {
             "com.android.incallui"
         )
 
-        fun ensureRunning(context: Context) {
-            if (!LockPrefs.lockEnabled(context)) return
-            if (LockPrefs.protectedPackages(context).isEmpty()) return
+        fun ensureRunning(context: Context): Boolean {
+            if (!LockPrefs.lockEnabled(context)) return false
+            if (LockPrefs.protectedPackages(context).isEmpty()) return false
             val intent = Intent(context, AppLockService::class.java)
-            try {
+            return try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(intent)
                 } else {
                     context.startService(intent)
                 }
-            } catch (e: IllegalStateException) {
-                // Background-start restriction; will restart on next resume.
+                true
+            } catch (e: Exception) {
+                // ForegroundServiceStartNotAllowedException (Android 12+
+                // background start) and IllegalStateException land here.
+                // Log it: this used to be swallowed, which hid the exact
+                // moment protection failed to (re)start.
+                Log.w(TAG, "ensureRunning failed: ${e.javaClass.simpleName}: ${e.message}")
+                false
             }
         }
 
         fun stop(context: Context) {
+            ServiceWatchdogReceiver.cancel(context)
             context.stopService(Intent(context, AppLockService::class.java))
         }
     }

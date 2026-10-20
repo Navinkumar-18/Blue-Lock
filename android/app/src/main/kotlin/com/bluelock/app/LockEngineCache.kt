@@ -40,13 +40,6 @@ object LockEngineCache {
     var currentActivity: WeakReference<LockActivity>? = null
         internal set
 
-    @Volatile
-    private var biometricActive = false
-
-    /** True while the cached-engine system biometric prompt is showing. */
-    val isBiometricActive: Boolean
-        get() = biometricActive
-
     val isReady: Boolean
         get() = engine != null
 
@@ -132,6 +125,11 @@ object LockEngineCache {
                         result.success(BiometricAuth.status(context))
                     "authenticateBiometric" -> {
                         if (activity == null) {
+                            Log.w(
+                                TAG,
+                                "authenticateBiometric refused: no attached " +
+                                    "lock activity persistent=true"
+                            )
                             result.error(
                                 "unavailable",
                                 "Lock activity not attached",
@@ -170,31 +168,30 @@ object LockEngineCache {
             result.error("bad_args", "package required", null)
             return
         }
-        if (biometricActive) {
-            result.error("busy", "Biometric prompt already showing", null)
-            return
-        }
-        if (!BiometricAuth.canAuthenticate(activity)) {
-            Log.d(TAG, "authenticateBiometric: no enrolled biometrics")
-            result.error("unavailable", "No enrolled biometrics", null)
-            return
-        }
         val args = arguments as? Map<*, *>
         val label = args?.get("label") as? String ?: pkg
-        biometricActive = true
-        Log.d(TAG, "launching system biometric prompt for $pkg (cached engine)")
-        BiometricAuth.showPrompt(
-            activity = activity,
-            title = "Blue Lock",
-            subtitle = "Authenticate to open $label"
-        ) { outcome, detail ->
-            biometricActive = false
-            when {
-                outcome == "success" -> result.success(true)
-                outcome == "user_cancel" ->
-                    result.error("user_cancel", detail, null)
-                else -> result.error("auth_failed", detail, null)
+        when (
+            BiometricAuth.start(
+                activity = activity,
+                title = "Blue Lock",
+                subtitle = "Authenticate to open $label"
+            ) { outcome, detail ->
+                when {
+                    outcome == "success" -> result.success(true)
+                    outcome == "user_cancel" ->
+                        result.error("user_cancel", detail, null)
+                    else -> result.error("auth_failed", detail, null)
+                }
             }
+        ) {
+            BiometricAuth.Start.READY ->
+                Log.d(TAG, "launching system biometric prompt for $pkg (cached engine)")
+            BiometricAuth.Start.BUSY ->
+                result.error("busy", "Biometric prompt already showing", null)
+            BiometricAuth.Start.HOST_NOT_READY ->
+                result.error("unavailable", "Lock screen not active", null)
+            BiometricAuth.Start.NO_BIOMETRICS ->
+                result.error("unavailable", "No enrolled biometrics", null)
         }
     }
 }

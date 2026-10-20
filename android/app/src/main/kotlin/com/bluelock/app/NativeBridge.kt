@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.Process
 import android.os.SystemClock
 import android.provider.Settings
@@ -31,10 +32,7 @@ import java.util.concurrent.Executors
 object NativeBridge {
     private const val CHANNEL = "com.bluelock.app/native"
     private const val TAG = "BlueLock"
-
-    /** One system biometric prompt at a time across the process. */
-    @Volatile
-    private var biometricActive = false
+    private const val REQUEST_NOTIFICATIONS = 51002
 
     /** Replies to the method channel on the platform thread, as required. */
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -113,6 +111,30 @@ object NativeBridge {
                 openUsageAccessSettings(context)
                 result.success(null)
             }
+            "hasNotificationPermission" -> result.success(
+                hasNotificationPermission(context)
+            )
+            "requestNotificationPermission" -> {
+                requestNotificationPermission(activity, context, result)
+            }
+            "isIgnoringBatteryOptimizations" -> result.success(
+                isIgnoringBatteryOptimizations(context)
+            )
+            "requestIgnoreBatteryOptimizations" -> {
+                requestIgnoreBatteryOptimizations(context)
+                result.success(null)
+            }
+            "openBatteryOptimizationSettings" -> {
+                openBatteryOptimizationSettings(context)
+                result.success(null)
+            }
+            "openAppSettings" -> {
+                openAppSettings(context)
+                result.success(null)
+            }
+            "isProtectionServiceRunning" -> result.success(
+                AppLockService.isRunning
+            )
             "hasOverlayPermission" -> result.success(
                 Settings.canDrawOverlays(context)
             )
@@ -223,32 +245,36 @@ object NativeBridge {
         if (activity == null) {
             // Registered against a plain application context (cached lock
             // engine): no FragmentActivity to attach the system prompt to.
+            Log.w(
+                TAG,
+                "self biometric refused: no host activity persistent=true"
+            )
             result.error("unavailable", "No host activity for biometric prompt", null)
-            return
-        }
-        if (biometricActive) {
-            result.error("busy", "Biometric prompt already showing", null)
-            return
-        }
-        if (!BiometricAuth.canAuthenticate(context)) {
-            result.error("unavailable", "No enrolled biometrics", null)
             return
         }
         val args = arguments as? Map<*, *>
         val label = args?.get("label") as? String ?: context.packageName
-        biometricActive = true
-        BiometricAuth.showPrompt(
-            activity = activity,
-            title = "Blue Lock",
-            subtitle = "Authenticate to open $label"
-        ) { outcome, detail ->
-            biometricActive = false
-            when {
-                outcome == "success" -> result.success(true)
-                outcome == "user_cancel" ->
-                    result.error("user_cancel", detail, null)
-                else -> result.error("auth_failed", detail, null)
+        when (
+            BiometricAuth.start(
+                activity = activity,
+                title = "Blue Lock",
+                subtitle = "Authenticate to open $label"
+            ) { outcome, detail ->
+                when {
+                    outcome == "success" -> result.success(true)
+                    outcome == "user_cancel" ->
+                        result.error("user_cancel", detail, null)
+                    else -> result.error("auth_failed", detail, null)
+                }
             }
+        ) {
+            BiometricAuth.Start.READY -> Unit // reply arrives from the session
+            BiometricAuth.Start.BUSY ->
+                result.error("busy", "Biometric prompt already showing", null)
+            BiometricAuth.Start.HOST_NOT_READY ->
+                result.error("unavailable", "App entry gate not active", null)
+            BiometricAuth.Start.NO_BIOMETRICS ->
+                result.error("unavailable", "No enrolled biometrics", null)
         }
     }
 
@@ -320,7 +346,11 @@ object NativeBridge {
         return stream.toByteArray()
     }
 
-    private fun hasUsageAccess(context: Context): Boolean {
+    /**
+     * Usage Access via AppOps. `internal` so [AppLockService] can re-verify
+     * it periodically and detect revocation without a Flutter round trip.
+     */
+    internal fun hasUsageAccess(context: Context): Boolean {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
         val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             appOps.unsafeCheckOpNoThrow(
@@ -344,4 +374,99 @@ object NativeBridge {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
     }
+
+    // ---- notification permission (Android 13+) ----
+
+    /**
+     * POST_NOTIFICATIONS gates visibility of the protection notification on
+     * Android 13+. Without it the service still runs, but the user has no
+     * signal that protection is active - and some OEMs treat FGS apps
+     * without visible notifications more aggressively.
+     */
+    fun hasNotificationPermission(context: Context): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun requestNotificationPermission(
+        activity: FragmentActivity?,
+        context: Context,
+        result: MethodChannel.Result
+    ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            result.success(true) // not required below Android 13
+            return
+        }
+        if (hasNotificationPermission(context)) {
+            result.success(true)
+            return
+        }
+        if (activity == null) {
+            result.error("unavailable", "No host activity to request permission", null)
+            return
+        }
+        activity.requestPermissions(
+            arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+            REQUEST_NOTIFICATIONS
+        )
+        result.success(false) // actual grant is re-checked on next resume
+    }
+
+    // ---- battery optimization ----
+
+    private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        return pm.isIgnoringBatteryOptimizations(context.packageName)
+    }
+
+    /**
+     * Opens the system dialog asking the user to exempt Blue Lock from
+     * battery optimization. Justified: continuous foreground-app detection
+     * is the app's core function and is throttled/killed under optimization
+     * on most OEMs. The user always confirms in the system dialog - the
+     * setting is never changed silently.
+     */
+    private fun requestIgnoreBatteryOptimizations(context: Context) {
+        val intent = Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:${context.packageName}")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.w(TAG, "battery-opt dialog unavailable, falling back to settings list")
+            openBatteryOptimizationSettings(context)
+        }
+    }
+
+    private fun openBatteryOptimizationSettings(context: Context) {
+        val intent = try {
+            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        } catch (e: Exception) {
+            // Some OEM builds drop this action; app details is the fallback.
+            appDetailsIntent(context)
+        }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.w(TAG, "could not open battery settings", e)
+            openAppSettings(context)
+        }
+    }
+
+    /** App-details page: where Motorola exposes "Battery usage -> Unrestricted". */
+    private fun openAppSettings(context: Context) {
+        val intent = appDetailsIntent(context)
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.w(TAG, "could not open app settings", e)
+        }
+    }
+
+    private fun appDetailsIntent(context: Context): Intent =
+        Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:${context.packageName}")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 }

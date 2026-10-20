@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 
 import 'biometric_status.dart';
@@ -10,6 +12,13 @@ class LockSession {
   static const String selfPackage = 'com.bluelock.app';
 
   static const MethodChannel channel = MethodChannel('com.bluelock.app/lock');
+
+  /// Outer bound for a single system-prompt round trip. Native code answers
+  /// every request itself (AndroidX callback, watchdog or host teardown), so
+  /// this only guards a platform hang that would otherwise leave the
+  /// biometric button disabled forever. The system prompt auto-dismisses
+  /// well before this and the native watchdog fires at 60s.
+  static const Duration biometricCallTimeout = Duration(seconds: 75);
 
   /// Ask native code to record a successful unlock and dismiss the lock
   /// activity.
@@ -57,11 +66,15 @@ class LockSession {
     required String label,
   }) async {
     try {
-      final ok = await channel.invokeMethod<bool>('authenticateBiometric', {
-        'package': packageName,
-        'label': label,
-      });
+      final ok = await channel
+          .invokeMethod<bool>('authenticateBiometric', {
+            'package': packageName,
+            'label': label,
+          })
+          .timeout(biometricCallTimeout);
       return ok == true ? 'success' : 'failed';
+    } on TimeoutException {
+      return 'failed';
     } on MissingPluginException {
       return 'unavailable';
     } on PlatformException catch (e) {

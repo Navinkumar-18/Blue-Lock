@@ -44,6 +44,10 @@ class _AppLockScreenState extends State<AppLockScreen> {
   BiometricStatus _biometric = BiometricStatus.unavailable;
   bool _biometricPromptActive = false;
 
+  /// The automatic prompt runs at most once per mount: repeated attempts are
+  /// always user-initiated, so a failing prompt can never loop on its own.
+  bool _autoPrompted = false;
+
   @override
   void initState() {
     super.initState();
@@ -78,21 +82,34 @@ class _AppLockScreenState extends State<AppLockScreen> {
     // Only the native lock screen (over a protected app) auto-launches the
     // system prompt; the in-app preview just offers the button.
     if (widget.nativeLock && status.canUse && !_unlocked) {
-      _promptBiometric();
+      _promptBiometric(auto: true);
     }
   }
 
-  Future<void> _promptBiometric() async {
+  Future<void> _promptBiometric({bool auto = false}) async {
     if (_biometricPromptActive || _verifying || _unlocked) return;
+    if (auto && _autoPrompted) return;
     if (!_biometric.canUse) return;
-    PerfLog.mark('lock: biometric prompt requested');
-    _biometricPromptActive = true;
-    final outcome = await LockSession.authenticateBiometric(
-      packageName: widget.packageName,
-      label: _app?.label ?? widget.packageName,
-    );
-    _biometricPromptActive = false;
+    if (auto) _autoPrompted = true;
+    PerfLog.mark('lock: biometric prompt requested (auto=$auto)');
+    setState(() => _biometricPromptActive = true);
+    var outcome = 'failed';
+    try {
+      outcome = await LockSession.authenticateBiometric(
+        packageName: widget.packageName,
+        label: _app?.label ?? widget.packageName,
+      );
+    } catch (_) {
+      // Defensive: an unexpected bridge failure is treated like a failed
+      // attempt (PIN keypad stays), never like a pass.
+    } finally {
+      // Re-arm the button whatever happens, so a lost/late reply can never
+      // leave "Unlock with biometrics" permanently disabled.
+      _biometricPromptActive = false;
+    }
     if (!mounted || _unlocked) return;
+    setState(() {}); // rebuild: button enabled again
+    PerfLog.mark('lock: biometric outcome=$outcome');
     if (outcome == 'success') {
       _unlocked = true;
       await LockSession.unlock(widget.packageName);
@@ -105,10 +122,26 @@ class _AppLockScreenState extends State<AppLockScreen> {
     }
     if (outcome == 'user_cancel') return; // user chose the PIN keypad
     // Failure or unavailability: PIN keypad remains as the fallback.
+    await _reportBiometricNotGranted(outcome);
+  }
+
+  /// Keeps the error message and the biometric button consistent with each
+  /// other. The message is decided by a *fresh* availability check, never by
+  /// the raw error code: "unavailable" is only shown when biometrics really
+  /// cannot be used (and the button below disappears with it), while a
+  /// transient refusal - prompt already busy, host not ready - keeps the
+  /// button offered and reads as a failed attempt.
+  Future<void> _reportBiometricNotGranted(String outcome) async {
+    final status = await LockSession.biometricStatus();
+    if (!mounted || _unlocked) return;
+    PerfLog.mark(
+      'lock: biometric not granted outcome=$outcome canUse=${status.canUse}',
+    );
+    setState(() => _biometric = status);
     _panelKey.currentState?.showError(
-      outcome == 'unavailable'
-          ? 'Biometric unlock unavailable. Enter your PIN.'
-          : 'Biometric unlock failed. Enter your PIN.',
+      status.canUse
+          ? 'Biometric unlock failed. Enter your PIN.'
+          : 'Biometric unlock unavailable. Enter your PIN.',
     );
   }
 
