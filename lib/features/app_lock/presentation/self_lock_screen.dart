@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/authentication/authentication_type.dart';
 import '../../../core/state/app_controller.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../authentication/presentation/recovery_screen.dart';
 import '../../authentication/services/pin_service.dart';
 import '../../../shared/widgets/branding.dart';
-import '../../../shared/widgets/pin_entry_panel.dart';
+import '../../../shared/widgets/credential_entry_panel.dart';
 import '../services/biometric_status.dart';
 
 /// Blue Lock's own authentication screen, shown by the app-entry gate before
@@ -20,12 +22,15 @@ class SelfLockScreen extends StatefulWidget {
 }
 
 class _SelfLockScreenState extends State<SelfLockScreen> {
-  final _panelKey = GlobalKey<PinEntryPanelState>();
+  final _panelKey = GlobalKey<CredentialEntryPanelState>();
   bool _verifying = false;
   bool _unlocked = false;
   BiometricStatus _biometric = BiometricStatus.unavailable;
   bool _biometricPromptActive = false;
   bool _autoPrompted = false;
+
+  AuthenticationType get _authType => widget.controller.pinService.authType;
+  String get _noun => _authType.credentialNoun;
 
   /// Permanent platform lockout: hide the biometric offer for this mount.
   bool _biometricBlocked = false;
@@ -78,14 +83,14 @@ class _SelfLockScreenState extends State<SelfLockScreen> {
     if (outcome == 'user_cancel') return; // user chose the PIN keypad
     if (outcome == 'lockout') {
       _panelKey.currentState?.showError(
-        'Too many biometric attempts. Use your PIN or try again shortly.',
+        'Too many biometric attempts. Use your $_noun or try again shortly.',
       );
       return;
     }
     if (outcome == 'lockout_permanent') {
       if (mounted) setState(() => _biometricBlocked = true);
       _panelKey.currentState?.showError(
-        'Biometric unlock is locked. Enter your PIN. Unlock your device '
+        'Biometric unlock is locked. Enter your $_noun. Unlock your device '
         'with its PIN, pattern or password to re-enable it.',
       );
       return;
@@ -104,22 +109,23 @@ class _SelfLockScreenState extends State<SelfLockScreen> {
     setState(() => _biometric = status);
     _panelKey.currentState?.showError(
       status.canUse
-          ? 'Biometric unlock failed. Enter your PIN.'
-          : 'Biometric unlock unavailable. Enter your PIN.',
+          ? 'Biometric unlock failed. Enter your $_noun.'
+          : 'Biometric unlock unavailable. Enter your $_noun.',
     );
   }
 
-  Future<void> _onPinCompleted(String pin) async {
+  Future<void> _onCredentialCompleted(String credential) async {
     if (_verifying || _unlocked) return;
     setState(() => _verifying = true);
     PinVerification result;
     try {
-      result = await widget.controller.pinService.verifyPinDetailed(pin);
+      result = await widget.controller.pinService
+          .verifyPinDetailed(credential);
     } catch (_) {
       if (!mounted) return;
       setState(() => _verifying = false);
       _panelKey.currentState
-          ?.showError('Could not verify your PIN. Try again.');
+          ?.showError('Could not verify your $_noun. Try again.');
       return;
     }
     if (!mounted) return;
@@ -140,42 +146,24 @@ class _SelfLockScreenState extends State<SelfLockScreen> {
     await widget.controller.grantSelfSession();
   }
 
+  /// Opens the verified recovery flow. Cancelling or failing verification
+  /// leaves the current lock, protected apps and settings untouched.
   Future<void> _forgotPin() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: const Text(
-          'Forgot PIN?',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-          ),
+    if (_verifying || _unlocked) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RecoveryScreen(
+          controller: widget.controller,
+          biometricAvailable:
+              _biometric.available && _biometric.enrolled,
+          requestBiometric: () => widget.controller.native
+              .authenticateBiometricSelf(label: 'Blue Lock'),
         ),
-        content: const Text(
-          'Your PIN cannot be recovered. Resetting Blue Lock removes your '
-          'PIN and unprotects all apps so you can set up a new PIN.',
-          style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel',
-                style: TextStyle(color: AppColors.textSecondary)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Reset Blue Lock',
-                style: TextStyle(color: AppColors.danger)),
-          ),
-        ],
       ),
     );
-    if (confirmed != true || !mounted) return;
-    await widget.controller.resetProtection();
     if (!mounted) return;
-    Navigator.of(context).pushNamedAndRemoveUntil('/onboarding', (_) => false);
+    _panelKey.currentState?.clear();
+    setState(() {});
   }
 
   @override
@@ -214,13 +202,14 @@ class _SelfLockScreenState extends State<SelfLockScreen> {
                       size: 26, color: Colors.white),
                 ),
                 const SizedBox(height: 18),
-                PinEntryPanel(
+                CredentialEntryPanel(
                   key: _panelKey,
+                  type: _authType,
                   heading: 'App Locked',
-                  description: 'Enter your PIN to continue.',
+                  description: _authType.verifyDescription,
                   actionLabel: _verifying ? 'Checking...' : 'Unlock',
-                  onCompleted: _onPinCompleted,
-                  forgotLabel: 'Forgot PIN?',
+                  onCompleted: _onCredentialCompleted,
+                  forgotLabel: _authType.forgotLabel,
                   onForgot: _forgotPin,
                 ),
                 if (_biometric.canUse && !_biometricBlocked)

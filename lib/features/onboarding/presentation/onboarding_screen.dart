@@ -37,7 +37,8 @@ class OnboardingScreen extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               const Text(
-                'Choose the apps you want to protect and unlock them with your PIN.',
+                'Choose the apps you want to protect and unlock them with a '
+                'PIN, pattern or password.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 15,
@@ -52,25 +53,27 @@ class OnboardingScreen extends StatelessWidget {
                 subtitle: 'Select installed apps to protect with one tap.',
               ),
               const _FeatureItem(
-                icon: Icons.pin_outlined,
-                title: 'Unlock with your PIN',
-                subtitle: 'A private 4-digit PIN keeps others out.',
+                icon: Icons.lock_outline_rounded,
+                title: 'Choose your lock',
+                subtitle: 'A 4 or 6-digit PIN, a pattern, or a password.',
               ),
               const _FeatureItem(
                 icon: Icons.shield_outlined,
                 title: 'Stay in control',
-                subtitle: 'Change your PIN and relock policy anytime.',
+                subtitle: 'Change your lock and relock policy anytime.',
               ),
               const Spacer(),
               PrimaryButton(
                 label: 'Get Started',
-                onPressed: () =>
-                    Navigator.of(context).pushReplacementNamed('/create-pin'),
+                onPressed: () => Navigator.of(context)
+                    .pushReplacementNamed('/choose-lock-type'),
               ),
               if (controller.pinService.hasPinSync) ...[
                 const SizedBox(height: 4),
                 SecondaryButton(
-                  label: 'I already have a PIN',
+                  label: controller.authType.isPin
+                      ? 'I already have a PIN'
+                      : 'I already have a lock',
                   onPressed: () =>
                       Navigator.of(context).pushReplacementNamed('/enter-pin'),
                 ),

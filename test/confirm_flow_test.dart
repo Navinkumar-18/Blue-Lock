@@ -106,6 +106,15 @@ void main() {
     }
   }
 
+  /// Onboarding now asks for a lock type before configuring it.
+  Future<void> startSetup(WidgetTester tester,
+      {String type = 'Four-Digit PIN'}) async {
+    await tester.tap(find.text('Get Started'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(type));
+    await tester.pumpAndSettle();
+  }
+
   /// Lets real asynchronous work (background derive, channel mocks) progress
   /// while fake-clock frames keep rendering, until [isDone] or ~2.5s.
   Future<void> waitFor(
@@ -120,14 +129,26 @@ void main() {
     }
   }
 
+  /// First-run setup now ends with the one-time recovery code. Acknowledge it
+  /// so the flow can continue to the dashboard.
+  Future<void> saveRecoveryCode(WidgetTester tester) async {
+    await waitFor(
+      tester,
+      () => find.text('Save your recovery code').evaluate().isNotEmpty,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Save your recovery code'), findsOneWidget);
+    await tester.tap(find.text("I've saved my recovery code"));
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('first-time setup reaches home; verifier persisted once',
       (tester) async {
     final controller = await makeController();
     await boot(tester, controller);
 
     expect(find.text('Keep your apps private'), findsOneWidget);
-    await tester.tap(find.text('Get Started'));
-    await tester.pumpAndSettle();
+    await startSetup(tester);
     expect(find.text('Create your PIN'), findsOneWidget);
 
     await enterDigits(tester, '1234');
@@ -137,34 +158,49 @@ void main() {
     // First three confirmation digits.
     await enterDigits(tester, '123');
 
-    // Fourth confirmation digit: start measuring until Home is present.
+    // Fourth confirmation digit: start measuring until the recovery-code
+    // step is present.
     final sw = Stopwatch()..start();
     await tester.tap(find.text('4'));
     await tester.pump(); // rebuild: action button is now enabled
     // Duplicate submission attempt while the first one is processing.
     await tester.tap(find.byType(FilledButton));
 
-    await waitFor(tester, () => find.byType(HomeShell).evaluate().isNotEmpty);
+    await waitFor(
+      tester,
+      () => find.text('Save your recovery code').evaluate().isNotEmpty,
+    );
     await tester.pumpAndSettle();
     sw.stop();
     // ignore: avoid_print
-    print('[perf] fourth confirm digit -> HomeShell present: '
+    print('[perf] fourth confirm digit -> recovery step present: '
         '${sw.elapsedMilliseconds}ms '
         '(marks since boot: digit4 +${PerfLog.markMs}ms, '
         'home frame +${PerfLog.homeFrameMs}ms)');
 
+    expect(find.text('Save your recovery code'), findsOneWidget);
+    await tester.tap(find.text("I've saved my recovery code"));
+    await tester.pumpAndSettle();
     expect(find.byType(HomeShell), findsOneWidget);
     expect(find.text('Your privacy'), findsOneWidget);
 
-    // Salt + verifier written exactly once (two channel writes).
-    expect(secureWriteCount, 2,
-        reason: 'salt and verifier must be persisted exactly once');
+    // Verifier record + salt mirror + type mirror + recovery verifier.
+    expect(secureWriteCount, 4,
+        reason: 'the credential record must be persisted exactly once, '
+            'together with its recovery verifier');
     expect(secureStore.containsKey('pin_verifier'), isTrue);
     expect(secureStore.containsKey('pin_salt'), isTrue);
+    expect(secureStore.containsKey('recovery_verifier'), isTrue);
     expect(controller.onboardingDone, isTrue);
     expect(controller.hasPin, isTrue);
+    expect(await controller.recoveryService.hasRecoveryCode(), isTrue);
     // Stored values must be salt+verifier, never the PIN itself.
     expect(secureStore.values.contains('1234'), isFalse);
+    // The recovery plaintext is never persisted either.
+    expect(
+      secureStore['recovery_verifier']!.contains('"verifier"'),
+      isTrue,
+    );
   });
 
   testWidgets('mismatched confirmation PIN is rejected without saving',
@@ -172,8 +208,7 @@ void main() {
     final controller = await makeController();
     await boot(tester, controller);
 
-    await tester.tap(find.text('Get Started'));
-    await tester.pumpAndSettle();
+    await startSetup(tester);
     await enterDigits(tester, '1234');
     await tester.pumpAndSettle();
 
@@ -193,8 +228,7 @@ void main() {
     final controller = await makeController();
     await boot(tester, controller);
 
-    await tester.tap(find.text('Get Started'));
-    await tester.pumpAndSettle();
+    await startSetup(tester);
     await enterDigits(tester, '1234');
     await tester.pumpAndSettle();
     await enterDigits(tester, '1234');
@@ -220,8 +254,7 @@ void main() {
     final controller = await makeController();
     await boot(tester, controller);
 
-    await tester.tap(find.text('Get Started'));
-    await tester.pumpAndSettle();
+    await startSetup(tester);
     await enterDigits(tester, '1234');
     await tester.pumpAndSettle();
     await enterDigits(tester, '1234');
@@ -244,11 +277,11 @@ void main() {
     // Complete setup once so state is fully persisted.
     final first = await makeController();
     await boot(tester, first);
-    await tester.tap(find.text('Get Started'));
-    await tester.pumpAndSettle();
+    await startSetup(tester);
     await enterDigits(tester, '1234');
     await tester.pumpAndSettle();
     await enterDigits(tester, '1234');
+    await saveRecoveryCode(tester);
     await waitFor(tester, () => find.byType(HomeShell).evaluate().isNotEmpty);
     await tester.pumpAndSettle();
     expect(find.byType(HomeShell), findsOneWidget);

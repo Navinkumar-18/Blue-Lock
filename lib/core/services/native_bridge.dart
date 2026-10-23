@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../features/app_lock/services/biometric_status.dart';
 import '../../features/installed_apps/models/installed_app.dart';
+import '../authentication/authentication_type.dart';
 
 /// Bridge to the native Android implementation (MainActivity).
 ///
@@ -136,6 +137,21 @@ class NativeBridge {
   Future<void> setRelockTimeout(int seconds) =>
       _invoke<void>('setRelockTimeout', seconds);
 
+  // ---- Authentication type (shared with native Android) ----
+  //
+  // The verifier itself stays in Flutter's encrypted storage. Native mirrors
+  // the selected type so both layers always interpret the lock screen and
+  // service-recovery state the same way. Unknown/old native values fall back
+  // to four-digit PIN, matching the Flutter migration rule.
+
+  Future<AuthenticationType> getAuthType() async {
+    final raw = await _invoke<String>('getAuthType');
+    return AuthenticationType.fromStorage(raw);
+  }
+
+  Future<void> setAuthType(AuthenticationType type) =>
+      _invoke<void>('setAuthType', type.storageValue);
+
   Future<void> lockPackage(String packageName) =>
       _invoke<void>('lockPackage', packageName);
 
@@ -173,8 +189,13 @@ class NativeBridge {
   /// Records a successful Blue Lock authentication under the relock policy.
   Future<void> unlockSelf() => _invoke<void>('unlockSelf');
 
-  /// Expires Blue Lock's own unlock session (forgot-PIN reset, recovery).
+  /// Expires Blue Lock's own unlock session without touching the credential.
   Future<void> lockSelf() => _invoke<void>('lockSelf');
+
+  /// Revokes every protected-app and self unlock session (used after a
+  /// verified recovery replaces the credential). The protection service and
+  /// the protected-app list are intentionally left untouched.
+  Future<void> lockAllSessions() => _invoke<void>('lockAllSessions');
 
   /// Blue Lock left the foreground: immediate policy expires the session,
   /// timed policies start the configured countdown from this moment.

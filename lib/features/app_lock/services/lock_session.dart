@@ -32,18 +32,6 @@ class LockSession {
     }
   }
 
-  /// Forgot-PIN recovery: wipes PIN and protected apps (personal-use reset).
-  /// The original PIN cannot be recovered.
-  static Future<void> resetProtection() async {
-    try {
-      await channel.invokeMethod('resetProtection');
-    } on MissingPluginException {
-      // Ignore outside lock activity.
-    } on PlatformException {
-      // Ignore.
-    }
-  }
-
   /// Device biometric capability + user preference (via the lock channel).
   static Future<BiometricStatus> biometricStatus() async {
     try {

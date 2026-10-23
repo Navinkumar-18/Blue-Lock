@@ -4,7 +4,9 @@ import '../../features/app_lock/services/biometric_status.dart';
 import '../../features/installed_apps/models/installed_app.dart';
 import '../../features/installed_apps/services/apps_repository.dart';
 import '../../features/authentication/services/pin_service.dart';
+import '../../features/authentication/services/recovery_service.dart';
 import '../../features/permissions/services/permissions_service.dart';
+import '../authentication/authentication_type.dart';
 import '../services/native_bridge.dart';
 import '../storage/app_storage.dart';
 import '../utils/perf_log.dart';
@@ -36,6 +38,11 @@ class AppController extends ChangeNotifier {
               storage,
               derive: services?.derive,
             ),
+        recoveryService = services?.recovery ??
+            RecoveryService(
+              storage,
+              derive: services?.derive,
+            ),
         appsRepository = services?.apps ?? AppsRepository(native),
         permissions = services?.permissions ?? PermissionsService(native) {
     lockedPackages = storage.lockedPackages.toSet();
@@ -46,6 +53,7 @@ class AppController extends ChangeNotifier {
   final AppStorage storage;
   final NativeBridge native;
   final PinService pinService;
+  final RecoveryService recoveryService;
   final AppsRepository appsRepository;
   final PermissionsService permissions;
 
@@ -68,6 +76,11 @@ class AppController extends ChangeNotifier {
 
   bool get lockEnabled => _lockEnabled;
   bool get hasPin => pinService.hasPinSync;
+
+  /// The selected lock method. Every authentication entry point reads this
+  /// from the same [PinService], which loads it from the encrypted credential
+  /// record (defaulting existing installs to a four-digit PIN).
+  AuthenticationType get authType => pinService.authType;
 
   /// Blue Lock's own unlock session (self-lock). Cached so the app-entry
   /// gate can decide synchronously; the source of truth is native LockPrefs
@@ -95,9 +108,34 @@ class AppController extends ChangeNotifier {
       enabled: storage.biometricEnabled,
     );
     await pinService.loadPinState();
+    // Mirror the selected method to native Android so both sides agree after
+    // service/activity recreation. The secure credential record remains the
+    // source of truth; this is a one-way mirror of the type only.
+    await native.setAuthType(authType);
     await refreshPermissions();
     await refreshBiometrics();
     await refreshSelfSession();
+  }
+
+  /// Saves the initial credential and its authentication type.
+  Future<void> createCredential({
+    required AuthenticationType type,
+    required String credential,
+  }) async {
+    await pinService.createCredential(type: type, credential: credential);
+    await native.setAuthType(type);
+    notifyListeners();
+  }
+
+  /// Replaces the credential after the current one was verified by a screen.
+  /// The old verifier remains intact when persistence fails.
+  Future<void> replaceCredential({
+    required AuthenticationType type,
+    required String credential,
+  }) async {
+    await pinService.replaceCredential(type: type, credential: credential);
+    await native.setAuthType(type);
+    notifyListeners();
   }
 
   /// Re-reads Blue Lock's own unlock session from native storage. An expired
@@ -126,7 +164,7 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  /// Expires Blue Lock's own session (forgot-PIN reset).
+  /// Expires Blue Lock's own session without touching the credential.
   Future<void> revokeSelfSession() async {
     await native.lockSelf();
     selfUnlocked = false;
@@ -221,20 +259,25 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Recovery for a forgotten PIN: wipes the PIN verifier and protected
-  /// apps so the user can set up Blue Lock again. The original PIN cannot
-  /// be recovered.
-  Future<void> resetProtection() async {
-    await pinService.resetAll();
-    lockedPackages = <String>{};
-    await storage.setLockedPackages(const []);
-    await native.setProtectedPackages(const []);
-    _lockEnabled = true;
-    await storage.setLockEnabled(true);
-    await native.setLockEnabled(true);
-    onboardingDone = false;
-    await storage.setOnboardingDone(false);
-    await revokeSelfSession();
+  /// Applies a new credential after the user has *verified* a recovery
+  /// factor (enrolled biometrics or the recovery code).
+  ///
+  /// This is deliberately not a reset: protected-app selections, the relock
+  /// policy, biometric preference and the monitoring service all stay intact.
+  /// Only the credential verifier and authentication type are replaced, and
+  /// every existing unlock session is revoked so protected apps require the
+  /// new credential. If persistence fails the previous credential remains
+  /// valid and the error is rethrown to the recovery screen.
+  Future<void> completeRecovery({
+    required AuthenticationType type,
+    required String credential,
+  }) async {
+    await pinService.replaceCredential(type: type, credential: credential);
+    await native.setAuthType(type);
+    // A forgotten credential may have left old unlock sessions behind.
+    // Revoke them; the user proves the new credential on the lock screen.
+    await native.lockAllSessions();
+    selfUnlocked = false;
     notifyListeners();
   }
 
@@ -250,11 +293,13 @@ class AppController extends ChangeNotifier {
 class AppControllerServices {
   const AppControllerServices({
     this.pin,
+    this.recovery,
     this.apps,
     this.permissions,
     this.derive,
   });
   final PinService? pin;
+  final RecoveryService? recovery;
   final AppsRepository? apps;
   final PermissionsService? permissions;
 

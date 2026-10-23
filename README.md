@@ -19,18 +19,19 @@
 
 ## 📌 Overview
 
-**Blue Lock** is an Android app protector designed to safeguard sensitive applications with a PIN and biometric authentication (Fingerprint / Face Unlock). Built with a hybrid Flutter and native Kotlin architecture, it pairs an aesthetic user interface with low-latency foreground service monitoring to intercept locked apps instantly.
+**Blue Lock** is an Android app protector designed to safeguard sensitive applications with a 4-digit PIN, 6-digit PIN, pattern, password and biometric authentication (Fingerprint / Face Unlock). Built with a hybrid Flutter and native Kotlin architecture, it pairs an aesthetic user interface with low-latency foreground service monitoring to intercept locked apps instantly.
 
 ---
 
 ## ✨ Features
 
-- 🔐 **Dual Security Modes**: Unlock apps with a 4-digit PIN or native Biometrics (Fingerprint / Face Unlock via AndroidX `BiometricPrompt`).
+- 🔐 **Multiple Lock Methods**: Protect apps with a 4-digit PIN, 6-digit PIN, 3 × 3 pattern or password, plus native Biometrics (Fingerprint / Face Unlock via AndroidX `BiometricPrompt`). The method can be changed in Settings after verifying the current credential.
+- 🆘 **Verified Recovery**: A 16-character recovery code (80 bits, displayed once during setup) or enrolled biometrics can authorise a forgotten-lock recovery. The new credential is configured and confirmed before the old one is replaced.
 - ⚡ **Real-Time Protection**: Lightweight Kotlin background service (`AppLockService`) monitors foreground transitions with minimal battery impact.
 - 🛡️ **Bypass-Resistant Lock Screen**: Full-screen native `LockActivity` ignores Back, is excluded from Recents, and survives screen-off/keyguard instead of flashing the protected app.
 - 📱 **App Manager**: Browse and search all installed applications; toggle protection with a single tap.
 - 🔄 **Reboot Resilience**: Automatically resumes background protection upon device restart via `BootReceiver` (`BOOT_COMPLETED`).
-- 🔑 **Cryptographic Security**: PIN verifiers are salted and hashed using PBKDF2 (HMAC-SHA256) and stored in encrypted storage (`flutter_secure_storage`).
+- 🔑 **Cryptographic Security**: Every credential is stored as a salted PBKDF2-HMAC-SHA256 verifier in encrypted storage (`flutter_secure_storage`). The plaintext PIN, pattern, password and recovery code are never persisted or logged.
 - 🎨 **Adaptive Branding**: Android 8.0+ adaptive icons and Android 12+ system splash screen tailored with the official Blue Lock aesthetic.
 
 ---
@@ -159,6 +160,34 @@ Android backup is disabled (`allowBackup="false"`), so settings and the PIN
 enrolment are intentionally **not** restored by cloud backup or device-to-device
 migration; set them up again after moving to a new device.
 
+### Forgot lock and recovery
+
+Tapping **Forgot PIN / pattern / password?** never clears the credential or the
+protected-app list. Recovery succeeds only after proving ownership of the
+device with one of the factors configured on it:
+
+- **Enrolled biometrics** through the same AndroidX `BiometricPrompt`, or
+- the **recovery code** generated after credential setup and shown
+  exactly once. It is 16 characters (80 bits) in `XXXX-XXXX-XXXX-XXXX` form;
+  only a salted PBKDF2 verifier is stored, so Blue Lock cannot display it again.
+
+After verification the user chooses and confirms a new credential. Only then is
+the old verifier replaced. Protected apps, the relock policy, biometric and
+other settings are preserved, and every existing unlock session is revoked so
+protected apps require the new credential. Recovery-code attempts share the
+same persisted failure/lockout counters as the primary credential, so switching
+methods cannot bypass a lockout. Cancelling or failing verification leaves the
+existing lock fully intact.
+
+Installations created before recovery codes existed have no recovery factor
+unless one is generated from **Settings → Recovery code**. If such a device has
+no enrolled biometrics, there is deliberately **no in-app reset**: the only
+platform-provided option is clearing Blue Lock's app data in Android Settings,
+which removes the credential, protected-app selections and all settings and
+stops protection until setup is completed again. Android does not let an app
+prevent data clearing or uninstall, so this limitation is platform-enforced and
+cannot be removed from inside Blue Lock.
+
 ### Battery and reliability
 
 - Polls foreground transitions every **500 ms while the screen is on** and once
@@ -175,17 +204,29 @@ migration; set them up again after moving to a new device.
 
 ## 🧪 Testing
 
-Run the test suite:
+Run the Flutter test suite (108 unit/widget tests):
 
 ```bash
 flutter test
 ```
 
-Run code analysis:
+Run Flutter code analysis:
 
 ```bash
 flutter analyze
 ```
+
+Run the native Kotlin unit tests for the app module:
+
+```bash
+cd android && ./gradlew :app:testDebugUnitTest
+```
+
+> Running `./gradlew testDebugUnitTest` at the Android project root also runs
+> the dependencies' own Robolectric tests. On a Java 17 toolchain the current
+> `shared_preferences_android` suite fails because Android SDK 36 requires Java
+> 21; use the `:app:` task above to test Blue Lock's native code, or run Gradle
+> with JDK 21.
 
 ---
 

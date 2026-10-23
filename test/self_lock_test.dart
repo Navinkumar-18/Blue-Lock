@@ -254,7 +254,20 @@ void main() {
     }
   }
 
-  /// Completes first-time setup (onboarding -> create -> confirm PIN).
+  /// Acknowledges the one-time recovery code shown after first-run setup.
+  Future<void> saveRecoveryCode(WidgetTester tester) async {
+    await waitFor(
+      tester,
+      () => find.text('Save your recovery code').evaluate().isNotEmpty,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Save your recovery code'), findsOneWidget);
+    await tester.tap(find.text("I've saved my recovery code"));
+    await tester.pumpAndSettle();
+  }
+
+  /// Completes first-time setup (onboarding -> create -> confirm PIN ->
+  /// recovery code).
   Future<AppController> completeSetup(
     WidgetTester tester, {
     String pin = '1234',
@@ -266,9 +279,12 @@ void main() {
     expect(find.text('Keep your apps private'), findsOneWidget);
     await tester.tap(find.text('Get Started'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Four-Digit PIN'));
+    await tester.pumpAndSettle();
     await enterDigits(tester, pin);
     await tester.pumpAndSettle();
     await enterDigits(tester, pin);
+    await saveRecoveryCode(tester);
     await waitFor(tester, () => find.byType(HomeShell).evaluate().isNotEmpty);
     await tester.pumpAndSettle();
     expect(find.byType(HomeShell), findsOneWidget);
@@ -306,9 +322,12 @@ void main() {
 
       await tester.tap(find.text('Get Started'));
       await tester.pumpAndSettle();
+      await tester.tap(find.text('Four-Digit PIN'));
+      await tester.pumpAndSettle();
       await enterDigits(tester, '1234');
       await tester.pumpAndSettle();
       await enterDigits(tester, '1234');
+      await saveRecoveryCode(tester);
       await waitFor(tester, () => find.byType(HomeShell).evaluate().isNotEmpty);
       await tester.pumpAndSettle();
 

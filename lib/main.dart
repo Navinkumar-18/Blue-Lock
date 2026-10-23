@@ -32,13 +32,13 @@ Future<void> main() async {
       defaultRoute.startsWith('lock/') || defaultRoute.startsWith('/lock/');
   if (isLockRoute) {
     // The engine booted by LockActivity renders authentication UI only.
-    // controller.init() would preload PIN state (a secure-storage read),
-    // query permissions, biometrics and the self-session over four
-    // platform-channel round trips - none of which the lock screen uses
-    // (it reads the PIN verifier on demand at verify time and fetches its
-    // biometric status over the lock channel). Skipping it keeps the first
-    // frame free of unrelated async work.
-    PerfLog.mark('dart: lock route - skipping dashboard init');
+    // controller.init() would preload permissions, biometrics and the
+    // self-session over several platform-channel round trips - none of which
+    // the lock screen uses. It does need the selected credential type before
+    // its first frame, otherwise a pattern/password user would briefly see a
+    // PIN keypad. One secure-storage read is enough for that.
+    await controller.pinService.loadAuthType();
+    PerfLog.mark('dart: lock route - loaded credential type');
   } else {
     await controller.init();
     // Mirror current configuration to the native lock service so protection

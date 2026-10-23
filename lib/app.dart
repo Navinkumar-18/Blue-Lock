@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 
+import 'core/authentication/authentication_type.dart';
 import 'core/state/app_controller.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/perf_log.dart';
 import 'features/app_lock/presentation/lock_host_screen.dart';
 import 'features/app_lock/presentation/self_auth_gate.dart';
+import 'features/authentication/presentation/change_lock_type_screen.dart';
 import 'features/authentication/presentation/change_pin_screen.dart';
-import 'features/authentication/presentation/confirm_pin_screen.dart';
-import 'features/authentication/presentation/create_pin_screen.dart';
+import 'features/authentication/presentation/choose_lock_type_screen.dart';
+import 'features/authentication/presentation/create_credential_screen.dart';
 import 'features/authentication/presentation/enter_pin_screen.dart';
+import 'features/authentication/presentation/recovery_code_setup_screen.dart';
 import 'features/dashboard/presentation/home_shell.dart';
 import 'features/onboarding/presentation/onboarding_screen.dart';
 import 'features/onboarding/presentation/splash_screen.dart';
@@ -29,7 +32,7 @@ class BlueLockApp extends StatefulWidget {
   /// session handling must stay completely out of that flow.
   final bool selfLockHost;
 
-  /// Global navigator key so callbacks (e.g. PIN created) can navigate.
+  /// Global navigator key so callbacks (e.g. credential created) can navigate.
   static final GlobalKey<NavigatorState> navigatorKey =
       GlobalKey<NavigatorState>();
 
@@ -95,8 +98,8 @@ class _BlueLockAppState extends State<BlueLockApp> with WidgetsBindingObserver {
         final name = raw.startsWith('/') ? raw : '/$raw';
         if (name.startsWith('/lock/')) {
           // Both "lock/<package>" (cold boot) and bare "lock/" (pre-warmed
-          // cached engine) land on the lock host: it renders the PIN screen
-          // for the route package immediately, or waits for the native
+          // cached engine) land on the lock host: it renders the credential
+          // screen for the route package immediately, or waits for the native
           // "showLock" push when the engine was booted idle.
           final packageName = name.substring('/lock/'.length);
           return MaterialPageRoute(
@@ -118,40 +121,50 @@ class _BlueLockAppState extends State<BlueLockApp> with WidgetsBindingObserver {
               builder: (_) => _guarded(OnboardingScreen(controller: controller)),
               settings: settings,
             );
-          case '/create-pin':
+          case '/choose-lock-type':
             return MaterialPageRoute(
-              builder: (_) => _guarded(CreatePinScreen(
-                // Persist only after the user confirms the matching PIN.
-                onPinCreated: (pin) {
-                  BlueLockApp.navigatorKey.currentState
-                      ?.pushReplacementNamed('/confirm-pin', arguments: pin);
-                },
-              )),
+              builder: (_) => _guarded(const ChooseLockTypeScreen()),
               settings: settings,
             );
-          case '/confirm-pin':
-            final firstPin = settings.arguments as String? ?? '';
+          case '/create-credential':
+            final type = settings.arguments is AuthenticationType
+                ? settings.arguments as AuthenticationType
+                : AuthenticationType.pin4Digit;
             return MaterialPageRoute(
-              builder: (_) => _guarded(ConfirmPinScreen(
-                firstPin: firstPin,
-                onConfirmed: (pin) async {
+              builder: (_) => _guarded(CreateCredentialScreen(
+                type: type,
+                onConfirmed: (credential) async {
                   // Required setup operations first; navigate as soon as
                   // they complete. Any failure propagates to the screen and
                   // leaves the user on it - onboarding is never marked done
                   // unless the verifier actually persisted.
-                  await controller.pinService.createPin(pin);
+                  await controller.createCredential(
+                    type: type,
+                    credential: credential,
+                  );
                   PerfLog.mark('confirm: verifier persisted');
                   await controller.markOnboardingDone();
                   PerfLog.mark('confirm: onboarding flag persisted');
-                  // The user just proved the new PIN: grant the self session
-                  // so setup lands on the dashboard instead of immediately
-                  // re-prompting. Any later open follows the relock policy.
+                  // The user just proved the new credential: grant the self
+                  // session so setup lands on the dashboard instead of
+                  // immediately re-prompting. Any later open follows the
+                  // relock policy.
                   await controller.grantSelfSession();
+                  // Show the one-time recovery code before the dashboard.
+                  // The user is already granted a session, so the gate does
+                  // not cover this setup step.
                   BlueLockApp.navigatorKey.currentState
-                      ?.pushNamedAndRemoveUntil('/home', (_) => false);
-                  PerfLog.mark('confirm: navigation to /home issued');
+                      ?.pushNamedAndRemoveUntil('/recovery-setup', (_) => false);
+                  PerfLog.mark('confirm: recovery-code step issued');
                 },
               )),
+              settings: settings,
+            );
+          case '/create-pin':
+            // Legacy route: setup always goes through the lock-type chooser
+            // so every entry point honours the same selected method.
+            return MaterialPageRoute(
+              builder: (_) => _guarded(const ChooseLockTypeScreen()),
               settings: settings,
             );
           case '/enter-pin':
@@ -171,6 +184,24 @@ class _BlueLockAppState extends State<BlueLockApp> with WidgetsBindingObserver {
             return MaterialPageRoute(
               builder: (_) => _guarded(ChangePinScreen(
                   pinService: controller.pinService)),
+              settings: settings,
+            );
+          case '/change-lock-type':
+            return MaterialPageRoute(
+              builder: (_) =>
+                  _guarded(ChangeLockTypeScreen(controller: controller)),
+              settings: settings,
+            );
+          case '/recovery-setup':
+            return MaterialPageRoute(
+              builder: (_) => _guarded(RecoveryCodeSetupScreen(
+                controller: controller,
+                isFirstRun: true,
+                onFinished: () {
+                  BlueLockApp.navigatorKey.currentState
+                      ?.pushNamedAndRemoveUntil('/home', (_) => false);
+                },
+              )),
               settings: settings,
             );
           case '/home':

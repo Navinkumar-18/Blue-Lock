@@ -5,8 +5,11 @@ import 'buttons.dart';
 import 'numeric_keypad.dart';
 import 'pin_indicators.dart';
 
-/// Reusable PIN entry block: heading, explanation, four masked indicators,
-/// numeric keypad with backspace, error message and primary action.
+/// Reusable PIN entry block: heading, explanation, masked indicators, numeric
+/// keypad with backspace, error message and primary action.
+///
+/// The digit count is configurable so the same component serves four-digit
+/// and six-digit PINs without duplicating UI or verification logic.
 class PinEntryPanel extends StatefulWidget {
   const PinEntryPanel({
     super.key,
@@ -14,6 +17,7 @@ class PinEntryPanel extends StatefulWidget {
     required this.description,
     required this.actionLabel,
     required this.onCompleted,
+    this.length = 4,
     this.errorText,
     this.onInputChanged,
     this.forgotLabel,
@@ -25,6 +29,10 @@ class PinEntryPanel extends StatefulWidget {
   final String description;
   final String actionLabel;
   final ValueChanged<String> onCompleted;
+
+  /// Exact number of digits required (4 or 6).
+  final int length;
+
   final String? errorText;
   final ValueChanged<String>? onInputChanged;
   final String? forgotLabel;
@@ -36,17 +44,21 @@ class PinEntryPanel extends StatefulWidget {
 }
 
 class PinEntryPanelState extends State<PinEntryPanel> {
-  static const int pinLength = 4;
-
   String _pin = '';
   String? _localError;
 
   String get pin => _pin;
 
+  int get pinLength => widget.length;
+
   @override
   void didUpdateWidget(covariant PinEntryPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.errorText != null && widget.errorText != oldWidget.errorText) {
+      _pin = '';
+      _localError = null;
+    }
+    if (widget.length != oldWidget.length) {
       _pin = '';
       _localError = null;
     }
@@ -128,6 +140,7 @@ class PinEntryPanelState extends State<PinEntryPanel> {
                   padding: const EdgeInsets.only(top: 10),
                   child: Text(
                     error,
+                    textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w500,

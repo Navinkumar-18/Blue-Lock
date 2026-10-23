@@ -217,13 +217,9 @@ class LockActivity : FlutterFragmentActivity() {
                         mainHandler.post { finish() }
                     }
                 }
-                "resetProtection" -> {
-                    Log.d(TAG, "resetProtection requested - wiping and finishing")
-                    LockPrefs.resetAll(appContext)
-                    AppLockService.stop(appContext)
-                    result.success(null)
-                    mainHandler.post { finish() }
-                }
+                // There is deliberately no unauthenticated "reset" method.
+                // Credential replacement is performed by Dart only after a
+                // verified recovery factor and is mirrored with setAuthType.
                 "getBiometricStatus" -> {
                     result.success(BiometricAuth.status(appContext))
                 }

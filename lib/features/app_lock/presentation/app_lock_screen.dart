@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/authentication/authentication_type.dart';
 import '../../../core/state/app_controller.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../authentication/presentation/recovery_screen.dart';
 import '../../authentication/services/pin_service.dart';
 import '../../installed_apps/models/installed_app.dart';
 import '../../installed_apps/services/apps_repository.dart';
 import '../services/biometric_status.dart';
 import '../services/lock_session.dart';
 import '../../../core/utils/perf_log.dart';
-import '../../../shared/widgets/pin_entry_panel.dart';
+import '../../../shared/widgets/credential_entry_panel.dart';
 
 /// Screen G: authentication screen shown when a protected app is opened.
 /// Displays the target app's icon/name, PIN indicators and keypad. No bottom
@@ -38,12 +40,15 @@ class AppLockScreen extends StatefulWidget {
 }
 
 class _AppLockScreenState extends State<AppLockScreen> {
-  final _panelKey = GlobalKey<PinEntryPanelState>();
+  final _panelKey = GlobalKey<CredentialEntryPanelState>();
   InstalledApp? _app;
   bool _verifying = false;
   bool _unlocked = false;
   BiometricStatus _biometric = BiometricStatus.unavailable;
   bool _biometricPromptActive = false;
+
+  AuthenticationType get _authType => widget.controller.pinService.authType;
+  String get _noun => _authType.credentialNoun;
 
   /// Set after the platform reports a permanent biometric lockout: the
   /// biometric button would only fail until the device is unlocked with its
@@ -131,14 +136,14 @@ class _AppLockScreenState extends State<AppLockScreen> {
       // Temporary platform lockout: biometrics stay offered (they recover on
       // their own), but the user needs an accurate explanation now.
       _panelKey.currentState?.showError(
-        'Too many biometric attempts. Use your PIN or try again shortly.',
+        'Too many biometric attempts. Use your $_noun or try again shortly.',
       );
       return;
     }
     if (outcome == 'lockout_permanent') {
       if (mounted) setState(() => _biometricBlocked = true);
       _panelKey.currentState?.showError(
-        'Biometric unlock is locked. Enter your PIN. Unlock your device '
+        'Biometric unlock is locked. Enter your $_noun. Unlock your device '
         'with its PIN, pattern or password to re-enable it.',
       );
       return;
@@ -162,23 +167,24 @@ class _AppLockScreenState extends State<AppLockScreen> {
     setState(() => _biometric = status);
     _panelKey.currentState?.showError(
       status.canUse
-          ? 'Biometric unlock failed. Enter your PIN.'
-          : 'Biometric unlock unavailable. Enter your PIN.',
+          ? 'Biometric unlock failed. Enter your $_noun.'
+          : 'Biometric unlock unavailable. Enter your $_noun.',
     );
   }
 
-  Future<void> _onPinCompleted(String pin) async {
+  Future<void> _onCredentialCompleted(String credential) async {
     if (_verifying || _unlocked) return;
     setState(() => _verifying = true);
     PinVerification result;
     try {
-      result = await widget.controller.pinService.verifyPinDetailed(pin);
+      result = await widget.controller.pinService
+          .verifyPinDetailed(credential);
     } catch (_) {
-      // Storage/crypto failure - never report it as an incorrect PIN.
+      // Storage/crypto failure - never report it as an incorrect credential.
       if (!mounted) return;
       setState(() => _verifying = false);
       _panelKey.currentState
-          ?.showError('Could not verify your PIN. Try again.');
+          ?.showError('Could not verify your $_noun. Try again.');
       return;
     }
     if (!mounted) return;
@@ -197,49 +203,34 @@ class _AppLockScreenState extends State<AppLockScreen> {
     }
   }
 
+  /// Opens the verified recovery flow. Nothing is cleared here: the lock and
+  /// the protected-app list stay intact unless recovery succeeds and the user
+  /// configures a new credential.
   Future<void> _forgotPin() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: const Text(
-          'Forgot PIN?',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-          ),
+    if (_verifying || _unlocked) return;
+    final label = _app?.label ?? widget.packageName;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RecoveryScreen(
+          controller: widget.controller,
+          biometricAvailable:
+              _biometric.available && _biometric.enrolled,
+          requestBiometric: widget.nativeLock
+              ? () => LockSession.authenticateBiometric(
+                    packageName: widget.packageName,
+                    label: label,
+                  )
+              : null,
+          nativeLock: widget.nativeLock,
         ),
-        content: const Text(
-          'Your PIN cannot be recovered. Resetting Blue Lock removes your '
-          'PIN and unprotects all apps so you can set up a new PIN.',
-          style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel',
-                style: TextStyle(color: AppColors.textSecondary)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Reset Blue Lock',
-                style: TextStyle(color: AppColors.danger)),
-          ),
-        ],
       ),
     );
-    if (confirmed == true && mounted) {
-      await widget.controller.resetProtection();
-      await LockSession.resetProtection();
-      if (widget.nativeLock) {
-        // Native LockActivity wipes prefs and finishes itself; do not
-        // navigate the lock engine to any Blue Lock screen.
-        return;
-      }
-      if (!mounted) return;
-      Navigator.of(context).pushNamedAndRemoveUntil('/onboarding', (_) => false);
-    }
+    if (!mounted) return;
+    // A verified recovery may have replaced the credential and type. Rebuild
+    // so this still-mounted lock screen reflects the new method; the user
+    // then proves the new credential by unlocking normally.
+    _panelKey.currentState?.clear();
+    setState(() {});
   }
 
   @override
@@ -304,13 +295,14 @@ class _AppLockScreenState extends State<AppLockScreen> {
                       size: 26, color: Colors.white),
                 ),
                 const SizedBox(height: 18),
-                PinEntryPanel(
+                CredentialEntryPanel(
                   key: _panelKey,
+                  type: _authType,
                   heading: 'App Locked',
-                  description: 'Enter your PIN to continue.',
+                  description: _authType.verifyDescription,
                   actionLabel: _verifying ? 'Checking...' : 'Unlock',
-                  onCompleted: _onPinCompleted,
-                  forgotLabel: 'Forgot PIN?',
+                  onCompleted: _onCredentialCompleted,
+                  forgotLabel: _authType.forgotLabel,
                   onForgot: _forgotPin,
                 ),
                 if (_biometric.canUse && !_biometricBlocked)

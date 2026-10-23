@@ -51,6 +51,22 @@ object LockPrefs {
         prefs(context).edit().putBoolean("biometric_enabled", enabled).apply()
     }
 
+    // ---- Authentication type mirror ----
+    //
+    // The credential verifier stays in Flutter's encrypted storage. Native
+    // persists only the selected type so a recreated service/activity reads
+    // the same method. Missing values (existing installs) mean PIN_4_DIGIT.
+
+    fun authType(context: Context): String =
+        prefs(context).getString("auth_type", AuthType.DEFAULT_WIRE)
+            ?.takeIf { AuthType.isValidWire(it) }
+            ?: AuthType.DEFAULT_WIRE
+
+    fun setAuthType(context: Context, wire: String?) {
+        val safe = if (AuthType.isValidWire(wire)) wire!! else AuthType.DEFAULT_WIRE
+        prefs(context).edit().putString("auth_type", safe).apply()
+    }
+
     /**
      * Unlock session bookkeeping. [timeoutSeconds] == 0 means the app is only
      * unlocked while it remains in the foreground.
@@ -159,10 +175,6 @@ object LockPrefs {
     fun clearSelfSession(context: Context) {
         clearSession(context, context.packageName)
         prefs(context).edit().remove(SELF_PID).apply()
-    }
-
-    fun resetAll(context: Context) {
-        prefs(context).edit().clear().apply()
     }
 
     fun getLastForeground(context: Context): String? =

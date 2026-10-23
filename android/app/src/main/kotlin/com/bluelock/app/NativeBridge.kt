@@ -211,6 +211,12 @@ object NativeBridge {
                 LockPrefs.setBiometricEnabled(context, arguments == true)
                 result.success(null)
             }
+            // ---- selected authentication type (mirror only) ----
+            "getAuthType" -> result.success(LockPrefs.authType(context))
+            "setAuthType" -> {
+                LockPrefs.setAuthType(context, arguments as? String)
+                result.success(null)
+            }
             // ---- Blue Lock self-authentication (app-entry gate) ----
             "isSelfUnlocked" -> result.success(LockPrefs.isSelfUnlocked(context))
             "unlockSelf" -> {
@@ -219,6 +225,13 @@ object NativeBridge {
             }
             "lockSelf" -> {
                 LockPrefs.clearSelfSession(context)
+                result.success(null)
+            }
+            // Verified recovery replaces the credential; every existing
+            // unlock session must be re-earned with the new credential. The
+            // protection service and protected-app list are not touched.
+            "lockAllSessions" -> {
+                LockPrefs.clearAllSessions(context)
                 result.success(null)
             }
             "selfBackgrounded" -> {

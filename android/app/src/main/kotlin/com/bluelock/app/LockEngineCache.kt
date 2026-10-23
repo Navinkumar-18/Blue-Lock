@@ -120,13 +120,8 @@ object LockEngineCache {
                             activity?.finish()
                         }
                     }
-                    "resetProtection" -> {
-                        Log.d(TAG, "resetProtection requested - wiping and finishing")
-                        LockPrefs.resetAll(context)
-                        AppLockService.stop(context)
-                        result.success(null)
-                        activity?.finish()
-                    }
+                    // No unauthenticated reset method: recovery is verified
+                    // in Dart before it may replace the credential.
                     "getBiometricStatus" ->
                         result.success(BiometricAuth.status(context))
                     "authenticateBiometric" -> {

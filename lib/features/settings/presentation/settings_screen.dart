@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../app_lock/presentation/app_lock_screen.dart';
+import '../../authentication/presentation/change_lock_type_screen.dart';
 import '../../authentication/presentation/change_pin_screen.dart';
+import '../../authentication/presentation/recovery_code_setup_screen.dart';
 import '../../../core/state/app_controller.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../permissions/presentation/permissions_screen.dart';
@@ -62,6 +64,12 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Widget _securityCard(BuildContext context) {
+    final type = controller.authType;
+    final credentialTitle = type.isPin
+        ? 'Change PIN'
+        : type.isPattern
+            ? 'Change pattern'
+            : 'Change password';
     return BlueLockCard(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Column(
@@ -69,17 +77,17 @@ class SettingsScreen extends StatelessWidget {
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.pin_outlined, color: AppColors.primary),
-            title: const Text(
-              'Change PIN',
-              style: TextStyle(
+            title: Text(
+              credentialTitle,
+              style: const TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
                 color: AppColors.textPrimary,
               ),
             ),
-            subtitle: const Text(
-              'Verify your current PIN to set a new one',
-              style: TextStyle(
+            subtitle: Text(
+              'Verify your current ${type.credentialNoun} to set a new one',
+              style: const TextStyle(
                 fontSize: 12,
                 color: AppColors.textSecondary,
               ),
@@ -96,6 +104,38 @@ class SettingsScreen extends StatelessWidget {
               );
             },
           ),
+          const Divider(),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.swap_horiz_rounded,
+                color: AppColors.primary),
+            title: const Text(
+              'Change Lock Type',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            subtitle: Text(
+              'Currently ${type.title}. Switch to a PIN, pattern or password',
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            trailing: const Icon(Icons.chevron_right,
+                color: AppColors.textSecondary),
+            onTap: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ChangeLockTypeScreen(controller: controller),
+                ),
+              );
+            },
+          ),
+          const Divider(),
+          _RecoveryTile(controller: controller),
           const Divider(),
           ListTile(
             contentPadding: EdgeInsets.zero,
@@ -141,6 +181,135 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
+}
+
+/// Recovery-code entry point. Existing installations see "Set up" here (a
+/// recovery code is never silently created for a user who never received
+/// one); new installations already generated it during onboarding.
+class _RecoveryTile extends StatefulWidget {
+  const _RecoveryTile({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_RecoveryTile> createState() => _RecoveryTileState();
+}
+
+class _RecoveryTileState extends State<_RecoveryTile> {
+  bool? _configured;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    bool configured = false;
+    try {
+      configured =
+          await widget.controller.recoveryService.hasRecoveryCode();
+    } catch (_) {
+      configured = false;
+    }
+    if (!mounted) return;
+    setState(() {
+      _configured = configured;
+      _loading = false;
+    });
+  }
+
+  Future<void> _open() async {
+    if (_loading) return;
+    if (_configured == true) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: const Text(
+            'Generate a new recovery code?',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          content: const Text(
+            'The new code is shown once. Your existing recovery code stops '
+            'working as soon as the new one is saved.',
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.45,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Generate'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            RecoveryCodeSetupScreen(controller: widget.controller),
+      ),
+    );
+    if (mounted) await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final configured = _configured;
+    final subtitle = _loading
+        ? 'Checking secure storage...'
+        : configured == true
+            ? 'Configured - use it if you forget your lock'
+            : 'Not set up - add a way back into Blue Lock';
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.key_rounded, color: AppColors.primary),
+      title: const Text(
+        'Recovery code',
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: AppColors.textPrimary,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: const TextStyle(
+          fontSize: 12,
+          color: AppColors.textSecondary,
+        ),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!_loading)
+            StatusPill(
+              label: configured == true ? 'Ready' : 'Not set',
+              tone: configured == true
+                  ? StatusTone.success
+                  : StatusTone.warning,
+            ),
+          const SizedBox(width: 4),
+          const Icon(Icons.chevron_right, color: AppColors.textSecondary),
+        ],
+      ),
+      onTap: _open,
+    );
+  }
 }
 
 /// About card: shows the version actually installed on the device instead of
@@ -194,9 +363,9 @@ class _AboutSectionState extends State<_AboutSection> {
           ),
           const SizedBox(height: 10),
           const Text(
-            'Your PIN never leaves this device. Blue Lock stores '
-            'only a salted PIN verifier and never uploads any '
-            'data.',
+            'Your PIN, pattern or password never leaves this device. Blue '
+            'Lock stores only salted verifiers. Recovery codes are stored as '
+            'verifiers too, never as plain text, and no data is uploaded.',
             style: TextStyle(
               fontSize: 13,
               height: 1.45,
@@ -239,7 +408,8 @@ class _ProtectionSection extends StatelessWidget {
                 ),
                 subtitle: Text(
                   controller.lockEnabled
-                      ? 'Protected apps require your PIN'
+                      ? 'Protected apps require your '
+                          '${controller.authType.credentialNoun}'
                       : 'All apps are currently unlocked',
                   style: const TextStyle(
                     fontSize: 12,
