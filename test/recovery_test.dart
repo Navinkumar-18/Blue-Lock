@@ -35,20 +35,28 @@ void main() {
   const lockChannel = MethodChannel('com.bluelock.app/lock');
   final secureStore = <String, String>{};
   final nativeCalls = <String>[];
+  final nativeCallLog = <String>[];
+  final lockCalls = <String>[];
   var failWrites = false;
 
   setUp(() {
     secureStore.clear();
     nativeCalls.clear();
+    nativeCallLog.clear();
+    lockCalls.clear();
     failWrites = false;
     SharedPreferences.setMockInitialValues({});
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(NativeBridge.channel, (call) async {
           nativeCalls.add(call.method);
+          nativeCallLog.add('${call.method}|${call.arguments}');
           return null;
         });
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(lockChannel, (call) async => null);
+        .setMockMethodCallHandler(lockChannel, (call) async {
+          lockCalls.add(call.method);
+          return null;
+        });
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(secureChannel, (call) async {
           final args = (call.arguments as Map).cast<String, dynamic>();
@@ -416,8 +424,10 @@ void main() {
       );
       await controller.setPackageLocked('com.example.victim', true);
       await controller.setRelockTimeout(60);
+      await controller.setBiometricEnabled(false);
       final code = await controller.recoveryService.createRecoveryCode();
       nativeCalls.clear();
+      nativeCallLog.clear();
 
       await openRecovery(tester, controller);
       await tester.tap(find.text('Use recovery code'));
@@ -463,9 +473,29 @@ void main() {
       );
       expect(controller.relockTimeoutSeconds, 60);
       expect(
+        controller.storage.biometricEnabled,
+        isFalse,
+        reason: 'the biometric preference is a setting, not part of the lock',
+      );
+      expect(
         nativeCalls,
         contains('lockAllSessions'),
         reason: 'sessions granted under the forgotten credential must die',
+      );
+      expect(
+        nativeCallLog.any(
+          (call) =>
+              call.startsWith('setLockEnabled|') ||
+              call.startsWith('setProtectedPackages|'),
+        ),
+        isFalse,
+        reason: 'recovery must not stop monitoring or rewrite protection',
+      );
+      expect(
+        lockCalls,
+        isNot(contains('unlock')),
+        reason:
+            'no protected app may be opened before the new credential saves',
       );
       expect(
         await controller.recoveryService.hasRecoveryCode(),
@@ -574,6 +604,142 @@ void main() {
         (await controller.pinService.verifyPinDetailed('1234')).isSuccess,
         isTrue,
       );
+    });
+
+    testWidgets('a failed biometric attempt leaves the lock and the code '
+        'fallback intact', (tester) async {
+      final controller = await makeController();
+      await controller.pinService.createCredential(
+        type: AuthenticationType.pin4Digit,
+        credential: '1234',
+      );
+      await controller.setPackageLocked('com.example.victim', true);
+      await controller.recoveryService.createRecoveryCode();
+
+      await openRecovery(
+        tester,
+        controller,
+        biometricAvailable: true,
+        requestBiometric: () async => 'failed',
+      );
+
+      await tester.tap(find.text('Recover with biometrics'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Biometric recovery failed. Use your recovery code.'),
+        findsOneWidget,
+      );
+      expect(find.text("Verify it's you"), findsOneWidget);
+      expect(find.text('Choose a new lock type'), findsNothing);
+      expect(find.text('Use recovery code'), findsOneWidget);
+      expect(controller.isLocked('com.example.victim'), isTrue);
+      expect(
+        (await controller.pinService.verifyPinDetailed('1234')).isSuccess,
+        isTrue,
+      );
+      expect(nativeCalls, isNot(contains('lockAllSessions')));
+    });
+
+    testWidgets('an authorised recovery abandoned before saving opens '
+        'nothing', (tester) async {
+      final controller = await makeController();
+      await controller.pinService.createCredential(
+        type: AuthenticationType.pin4Digit,
+        credential: '1234',
+      );
+      await controller.setPackageLocked('com.example.victim', true);
+      final code = await controller.recoveryService.createRecoveryCode();
+
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppLockScreen(
+            packageName: 'com.example.victim',
+            controller: controller,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Forgot PIN?'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Use recovery code'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), RecoveryCode.format(code));
+      await tester.pump();
+      await tester.tap(find.text('Verify code'));
+      await tester.pumpAndSettle();
+      expect(find.text('Choose a new lock type'), findsOneWidget);
+
+      // The factor was valid, but the credential has not been replaced yet.
+      // Backing out must not unlock the protected app.
+      await tester.ensureVisible(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(RecoveryScreen), findsNothing);
+      expect(find.byType(AppLockScreen), findsOneWidget);
+      expect(lockCalls, isNot(contains('unlock')));
+      expect(controller.isLocked('com.example.victim'), isTrue);
+      expect(controller.authType, AuthenticationType.pin4Digit);
+      expect(
+        (await controller.pinService.verifyPinDetailed('1234')).isSuccess,
+        isTrue,
+      );
+    });
+
+    testWidgets('biometric unlock still works with the recovered credential', (
+      tester,
+    ) async {
+      final controller = await makeController();
+      await controller.pinService.createCredential(
+        type: AuthenticationType.pin4Digit,
+        credential: '1234',
+      );
+      await controller.setPackageLocked('com.example.victim', true);
+      await controller.recoveryService.createRecoveryCode();
+      await controller.completeRecovery(
+        type: AuthenticationType.pin6Digit,
+        credential: '654321',
+      );
+      expect(
+        (await controller.pinService.verifyPinDetailed('654321')).isSuccess,
+        isTrue,
+      );
+
+      var unlocks = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(lockChannel, (call) async {
+            lockCalls.add(call.method);
+            switch (call.method) {
+              case 'getBiometricStatus':
+                return {'available': true, 'enrolled': true, 'enabled': true};
+              case 'authenticateBiometric':
+                return true;
+            }
+            return null;
+          });
+
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppLockScreen(
+            packageName: 'com.example.victim',
+            controller: controller,
+            nativeLock: true,
+            onUnlocked: () => unlocks++,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(unlocks, 1);
+      expect(lockCalls, contains('authenticateBiometric'));
+      expect(lockCalls, contains('unlock'));
     });
   });
 

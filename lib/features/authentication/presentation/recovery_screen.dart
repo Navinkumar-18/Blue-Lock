@@ -239,6 +239,14 @@ class _RecoveryScreenState extends State<RecoveryScreen> {
     Navigator.of(context).pop(true);
   }
 
+  void _cancelRecovery() {
+    if (_busy) return;
+    // The explicit Cancel action leaves recovery entirely. This must not go
+    // through maybePop: PopScope intentionally blocks a route pop while a
+    // factor is verified, which would otherwise make Cancel a no-op.
+    Navigator.of(context).pop();
+  }
+
   void _onBack() {
     if (_busy) return;
     switch (_step) {
@@ -447,7 +455,7 @@ class _RecoveryScreenState extends State<RecoveryScreen> {
         const SizedBox(height: 22),
         SecondaryButton(
           label: 'Cancel',
-          onPressed: _busy ? null : () => Navigator.of(context).maybePop(),
+          onPressed: _busy ? null : _cancelRecovery,
         ),
       ],
     );
@@ -538,7 +546,7 @@ class _RecoveryScreenState extends State<RecoveryScreen> {
         const SizedBox(height: 4),
         SecondaryButton(
           label: 'Cancel',
-          onPressed: _busy ? null : () => Navigator.of(context).maybePop(),
+          onPressed: _busy ? null : _cancelRecovery,
         ),
       ],
     );
@@ -577,10 +585,7 @@ class _RecoveryScreenState extends State<RecoveryScreen> {
           }),
         ),
         const SizedBox(height: 10),
-        SecondaryButton(
-          label: 'Cancel',
-          onPressed: () => Navigator.of(context).maybePop(),
-        ),
+        SecondaryButton(label: 'Cancel', onPressed: _cancelRecovery),
       ],
     );
   }
