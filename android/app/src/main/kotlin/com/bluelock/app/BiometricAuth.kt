@@ -9,6 +9,7 @@ import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
+import io.flutter.plugin.common.MethodChannel
 
 /**
  * System biometric authentication for the lock screen, backed by AndroidX
@@ -29,9 +30,12 @@ import androidx.lifecycle.Lifecycle
  *    final result.
  *
  * Outcomes reported to [start]'s callback:
- *  - "success"        platform-reported authentication success
- *  - "user_cancel"    user dismissed the prompt or tapped the PIN button
- *  - "error:<code>"   any other platform error, watchdog timeout or lost host
+ *  - "success"            platform-reported authentication success
+ *  - "user_cancel"        user dismissed the prompt or tapped the PIN button
+ *  - "lockout"            temporary platform lockout (recoverable)
+ *  - "lockout_permanent"  platform lockout requiring the device credential
+ *  - "unavailable"        hardware missing, no enrollment or security update
+ *  - "error:<code>"       other platform error, watchdog timeout, lost host
  */
 object BiometricAuth {
 
@@ -191,14 +195,7 @@ object BiometricAuth {
                     errorCode: Int,
                     errString: CharSequence
                 ) {
-                    val cancelled =
-                        errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
-                            errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
-                            errorCode == BiometricPrompt.ERROR_CANCELED
-                    onCallback(
-                        if (cancelled) "user_cancel" else "error:$errorCode",
-                        errString.toString()
-                    )
+                    onCallback(outcomeForError(errorCode), errString.toString())
                 }
 
                 override fun onAuthenticationFailed() {
@@ -263,6 +260,41 @@ object BiometricAuth {
         }
         Log.i(TAG, "BIOMETRIC outcome=$outcome source=$source${if (detail.isNotEmpty()) " detail=$detail" else ""}")
         reply?.invoke(outcome, detail)
+    }
+
+    /**
+     * Maps a platform prompt error to the small outcome vocabulary shared by
+     * every biometric channel caller. Lockout states are explicit so the UI
+     * can explain them instead of showing a generic failure and keeping a
+     * button that cannot succeed.
+     */
+    fun outcomeForError(errorCode: Int): String = when (errorCode) {
+        BiometricPrompt.ERROR_USER_CANCELED,
+        BiometricPrompt.ERROR_NEGATIVE_BUTTON,
+        BiometricPrompt.ERROR_CANCELED -> "user_cancel"
+        BiometricPrompt.ERROR_LOCKOUT -> "lockout"
+        BiometricPrompt.ERROR_LOCKOUT_PERMANENT -> "lockout_permanent"
+        BiometricPrompt.ERROR_HW_UNAVAILABLE,
+        BiometricPrompt.ERROR_NO_BIOMETRICS,
+        BiometricPrompt.ERROR_HW_NOT_PRESENT,
+        BiometricPrompt.ERROR_SECURITY_UPDATE_REQUIRED -> "unavailable"
+        else -> "error:$errorCode"
+    }
+
+    /**
+     * Single place that converts a finished session outcome into the pending
+     * MethodChannel reply, so all hosts (protected-app lock, self-auth gate)
+     * report identical codes. Only a platform-reported success resolves true.
+     */
+    fun reply(result: MethodChannel.Result, outcome: String, detail: String) {
+        when (outcome) {
+            "success" -> result.success(true)
+            "user_cancel" -> result.error("user_cancel", detail, null)
+            "lockout" -> result.error("lockout", detail, null)
+            "lockout_permanent" -> result.error("lockout_permanent", detail, null)
+            "unavailable" -> result.error("unavailable", detail, null)
+            else -> result.error("auth_failed", detail, null)
+        }
     }
 
     private fun codeName(code: Int): String = when (code) {

@@ -25,11 +25,16 @@ class BootReceiver : BroadcastReceiver() {
                 LockPrefs.clearForegroundOnlySessions(context)
                 LockPrefs.setLastForeground(context, null)
                 LockPrefs.setLastPollTime(context, 0L)
-                val started = AppLockService.ensureRunning(context)
-                // Keep the watchdog chain alive even if this start failed
-                // (e.g. background-start restrictions): the watchdog retries
-                // with its own allowlist window.
-                if (started) ServiceWatchdogReceiver.schedule(context)
+                if (LockPrefs.lockEnabled(context) &&
+                    LockPrefs.protectedPackages(context).isNotEmpty()
+                ) {
+                    // Keep the watchdog chain alive even if this start fails
+                    // (e.g. OEM background restrictions): the watchdog
+                    // retries; a granted battery-optimisation exemption
+                    // permits a background foreground-service start.
+                    AppLockService.ensureRunning(context)
+                    ServiceWatchdogReceiver.schedule(context)
+                }
             }
         }
     }

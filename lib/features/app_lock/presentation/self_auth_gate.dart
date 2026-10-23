@@ -42,7 +42,10 @@ class SelfAuthGate extends StatelessWidget {
           // second authentication screen (prevents overlapping prompts).
           return const ColoredBox(color: AppColors.background);
         }
-        return SelfLockScreen(controller: controller);
+        return PopScope(
+          canPop: false,
+          child: SelfLockScreen(controller: controller),
+        );
       },
     );
   }

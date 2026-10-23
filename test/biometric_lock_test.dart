@@ -72,6 +72,10 @@ class FakeLockChannel {
           code = 'unavailable';
         } else if (current == 'failed') {
           code = 'auth_failed';
+        } else if (current == 'lockout') {
+          code = 'lockout';
+        } else if (current == 'lockout_permanent') {
+          code = 'lockout_permanent';
         } else {
           code = 'user_cancel';
         }
@@ -316,6 +320,52 @@ void main() {
       expect(biometricButton(tester).onPressed, isNotNull,
           reason: 'the button is re-armed after the watchdog');
     });
+
+    testWidgets(
+        'temporary biometric lockout explains itself and keeps PIN fallback',
+        (tester) async {
+      fake.biometricUsable = true;
+      fake.outcome = 'lockout';
+      controller = await makeController();
+      await bootLock(tester, controller, 'com.example.bank');
+
+      await waitFor(tester, () => fake.authenticateCalls == 1);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text(
+            'Too many biometric attempts. Use your PIN or try again shortly.'),
+        findsOneWidget,
+      );
+      expect(find.text(unavailableMsg), findsNothing);
+      expect(find.text(failedMsg), findsNothing);
+      expect(find.widgetWithText(TextButton, 'Unlock with biometrics'),
+          findsOneWidget,
+          reason: 'temporary lockout recovers; the offer stays available');
+      expect(find.text('Enter your PIN to continue.'), findsOneWidget);
+    });
+
+    testWidgets(
+        'permanent biometric lockout hides the button and points to the PIN',
+        (tester) async {
+      fake.biometricUsable = true;
+      fake.outcome = 'lockout_permanent';
+      controller = await makeController();
+      await bootLock(tester, controller, 'com.example.bank');
+
+      await waitFor(tester, () => fake.authenticateCalls == 1);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Biometric unlock is locked. Enter your PIN.'),
+        findsOneWidget,
+      );
+      expect(find.widgetWithText(TextButton, 'Unlock with biometrics'),
+          findsNothing,
+          reason: 'a permanently locked biometric cannot succeed; do not '
+              'offer a button that only fails');
+      expect(find.text('Enter your PIN to continue.'), findsOneWidget);
+    });
   });
 
   group('self lock screen consistency', () {
@@ -365,6 +415,32 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text(unavailableMsg), findsOneWidget);
+      expect(find.widgetWithText(TextButton, 'Unlock with biometrics'),
+          findsNothing);
+      expect(find.text('Enter your PIN to continue.'), findsOneWidget);
+    });
+
+    testWidgets(
+        'permanent biometric lockout on the self gate hides the button and '
+        'keeps the PIN fallback', (tester) async {
+      fake.biometricUsable = true;
+      fake.outcome = 'lockout_permanent';
+      controller = await makeController();
+
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(MaterialApp(
+        home: SelfLockScreen(controller: controller),
+      ));
+
+      await waitFor(tester, () => fake.authenticateCalls == 1);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Biometric unlock is locked. Enter your PIN.'),
+        findsOneWidget,
+      );
       expect(find.widgetWithText(TextButton, 'Unlock with biometrics'),
           findsNothing);
       expect(find.text('Enter your PIN to continue.'), findsOneWidget);

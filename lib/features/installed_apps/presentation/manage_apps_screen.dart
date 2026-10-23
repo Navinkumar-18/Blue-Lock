@@ -224,6 +224,8 @@ class _ManageAppsScreenState extends State<ManageAppsScreen>
 
     final apps = _filtered(controller);
     if (apps.isEmpty) {
+      final filtered =
+          _query.value.isNotEmpty || _filter.value != _Filter.all;
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -237,14 +239,15 @@ class _ManageAppsScreenState extends State<ManageAppsScreen>
                   color: AppColors.paleBlueSoft,
                   borderRadius: BorderRadius.circular(18),
                 ),
-                child: const Icon(Icons.search_off,
-                    size: 28, color: AppColors.primary),
+                child: Icon(
+                  filtered ? Icons.search_off : Icons.apps_outlined,
+                  size: 28,
+                  color: AppColors.primary,
+                ),
               ),
               const SizedBox(height: 14),
               Text(
-                _query.value.isNotEmpty || _filter.value != _Filter.all
-                    ? 'No apps match your search'
-                    : 'No apps protected yet',
+                filtered ? 'No apps match your search' : 'No apps found',
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w700,
@@ -252,11 +255,26 @@ class _ManageAppsScreenState extends State<ManageAppsScreen>
                 ),
               ),
               const SizedBox(height: 6),
-              const Text(
-                'Try a different search or filter to find apps.',
+              Text(
+                filtered
+                    ? 'Try a different search or filter to find apps.'
+                    : 'Blue Lock could not find launchable apps on this '
+                        'device.',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                style: const TextStyle(
+                    fontSize: 13, color: AppColors.textSecondary),
               ),
+              if (!filtered) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: 180,
+                  child: PrimaryButton(
+                    label: 'Scan again',
+                    onPressed: () =>
+                        controller.loadInstalledApps(force: true),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -471,10 +489,13 @@ class _AppRow extends StatelessWidget {
               padding: EdgeInsets.only(right: 6),
               child: StatusPill(label: 'Protected', tone: StatusTone.neutral),
             ),
-          Switch(
-            value: locked,
-            onChanged: onChanged,
-            activeTrackColor: AppColors.primary,
+          Semantics(
+            label: 'Protect ${app.label}',
+            child: Switch(
+              value: locked,
+              onChanged: onChanged,
+              activeTrackColor: AppColors.primary,
+            ),
           ),
         ],
       ),

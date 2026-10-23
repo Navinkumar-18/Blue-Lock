@@ -72,6 +72,17 @@ class NativeBridge {
     );
   }
 
+  /// Actual installed version, read from Android's PackageManager.
+  /// Returns null when the platform channel is unavailable (tests/desktop).
+  Future<String?> getAppVersion() async {
+    final raw = await _invoke<Map<dynamic, dynamic>>('getAppVersion');
+    if (raw == null) return null;
+    final name = raw['versionName'] as String?;
+    final code = raw['versionCode'];
+    if (name == null || name.isEmpty) return null;
+    return code == null ? name : '$name ($code)';
+  }
+
   Future<bool> hasUsageAccess() async {
     final result = await _invoke<bool>('hasUsageAccess');
     return result ?? false;
@@ -171,10 +182,12 @@ class NativeBridge {
 
   /// Launches the AndroidX system biometric prompt for Blue Lock itself.
   /// Returns the same outcome vocabulary as the lock screen:
-  ///  - 'success'     platform-reported authentication success
-  ///  - 'user_cancel' user dismissed the prompt / chose PIN
-  ///  - 'unavailable' no biometrics, busy, or running outside Android
-  ///  - 'failed'      any other platform error (never treated as success)
+  ///  - 'success'            platform-reported authentication success
+  ///  - 'user_cancel'        user dismissed the prompt / chose PIN
+  ///  - 'lockout'            temporary platform lockout; PIN is the fallback
+  ///  - 'lockout_permanent'  too many attempts; device unlock re-enables it
+  ///  - 'unavailable'        no biometrics, busy, or running outside Android
+  ///  - 'failed'             any other platform error (never treated as success)
   /// Outer bound for one system-prompt round trip so a platform hang can
   /// never leave the biometric button disabled forever (native answers every
   /// request itself via callback, watchdog or host teardown).
@@ -198,6 +211,10 @@ class NativeBridge {
       switch (e.code) {
         case 'user_cancel':
           return 'user_cancel';
+        case 'lockout':
+          return 'lockout';
+        case 'lockout_permanent':
+          return 'lockout_permanent';
         case 'unavailable':
         case 'busy':
           return 'unavailable';

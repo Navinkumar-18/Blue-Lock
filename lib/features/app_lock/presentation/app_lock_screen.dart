@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/state/app_controller.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../authentication/services/pin_service.dart';
 import '../../installed_apps/models/installed_app.dart';
 import '../../installed_apps/services/apps_repository.dart';
 import '../services/biometric_status.dart';
@@ -43,6 +44,11 @@ class _AppLockScreenState extends State<AppLockScreen> {
   bool _unlocked = false;
   BiometricStatus _biometric = BiometricStatus.unavailable;
   bool _biometricPromptActive = false;
+
+  /// Set after the platform reports a permanent biometric lockout: the
+  /// biometric button would only fail until the device is unlocked with its
+  /// primary credential, so it is hidden for this lock session.
+  bool _biometricBlocked = false;
 
   /// The automatic prompt runs at most once per mount: repeated attempts are
   /// always user-initiated, so a failing prompt can never loop on its own.
@@ -121,6 +127,22 @@ class _AppLockScreenState extends State<AppLockScreen> {
       return;
     }
     if (outcome == 'user_cancel') return; // user chose the PIN keypad
+    if (outcome == 'lockout') {
+      // Temporary platform lockout: biometrics stay offered (they recover on
+      // their own), but the user needs an accurate explanation now.
+      _panelKey.currentState?.showError(
+        'Too many biometric attempts. Use your PIN or try again shortly.',
+      );
+      return;
+    }
+    if (outcome == 'lockout_permanent') {
+      if (mounted) setState(() => _biometricBlocked = true);
+      _panelKey.currentState?.showError(
+        'Biometric unlock is locked. Enter your PIN. Unlock your device '
+        'with its PIN, pattern or password to re-enable it.',
+      );
+      return;
+    }
     // Failure or unavailability: PIN keypad remains as the fallback.
     await _reportBiometricNotGranted(outcome);
   }
@@ -148,10 +170,20 @@ class _AppLockScreenState extends State<AppLockScreen> {
   Future<void> _onPinCompleted(String pin) async {
     if (_verifying || _unlocked) return;
     setState(() => _verifying = true);
-    final ok = await widget.controller.pinService.verifyPin(pin);
+    PinVerification result;
+    try {
+      result = await widget.controller.pinService.verifyPinDetailed(pin);
+    } catch (_) {
+      // Storage/crypto failure - never report it as an incorrect PIN.
+      if (!mounted) return;
+      setState(() => _verifying = false);
+      _panelKey.currentState
+          ?.showError('Could not verify your PIN. Try again.');
+      return;
+    }
     if (!mounted) return;
     setState(() => _verifying = false);
-    if (ok) {
+    if (result.isSuccess) {
       _unlocked = true;
       await LockSession.unlock(widget.packageName);
       widget.onUnlocked?.call();
@@ -161,7 +193,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
         Navigator.of(context).maybePop();
       }
     } else {
-      _panelKey.currentState?.showError('Incorrect PIN. Try again.');
+      _panelKey.currentState?.showError(result.message);
     }
   }
 
@@ -281,7 +313,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
                   forgotLabel: 'Forgot PIN?',
                   onForgot: _forgotPin,
                 ),
-                if (_biometric.canUse)
+                if (_biometric.canUse && !_biometricBlocked)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: TextButton.icon(

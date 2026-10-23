@@ -62,4 +62,25 @@ void main() {
     await tester.pump();
     expect(controller.lockEnabled, switchBefore);
   });
+
+  testWidgets('about card shows the installed version from the platform',
+      (tester) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(NativeBridge.channel, (call) async {
+      if (call.method == 'getAppVersion') {
+        return <String, dynamic>{
+          'versionName': '1.0.1',
+          'versionCode': 2002,
+        };
+      }
+      return null;
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: SettingsScreen(controller: controller),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Version 1.0.1 (2002)'), findsOneWidget);
+  });
 }

@@ -79,8 +79,14 @@ object LockEngineCache {
      */
     fun showLock(packageName: String) {
         val e = engine ?: return
-        MethodChannel(e.dartExecutor.binaryMessenger, LOCK_CHANNEL)
-            .invokeMethod("showLock", packageName)
+        try {
+            MethodChannel(e.dartExecutor.binaryMessenger, LOCK_CHANNEL)
+                .invokeMethod("showLock", packageName)
+        } catch (t: Throwable) {
+            // The engine can be mid-teardown after a low-memory kill; never
+            // let a best-effort push crash the lock activity.
+            Log.w(TAG, "showLock push failed for $packageName", t)
+        }
     }
 
     /** Resets the Dart lock host to its idle placeholder. Best-effort. */
@@ -175,14 +181,7 @@ object LockEngineCache {
                 activity = activity,
                 title = "Blue Lock",
                 subtitle = "Authenticate to open $label"
-            ) { outcome, detail ->
-                when {
-                    outcome == "success" -> result.success(true)
-                    outcome == "user_cancel" ->
-                        result.error("user_cancel", detail, null)
-                    else -> result.error("auth_failed", detail, null)
-                }
-            }
+            ) { outcome, detail -> BiometricAuth.reply(result, outcome, detail) }
         ) {
             BiometricAuth.Start.READY ->
                 Log.d(TAG, "launching system biometric prompt for $pkg (cached engine)")

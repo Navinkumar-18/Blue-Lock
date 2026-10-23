@@ -12,8 +12,10 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
@@ -33,8 +35,10 @@ import android.os.SystemClock
  *    OEM force-stop / restricted-standby kills (common on Motorola devices),
  *    which is exactly the "stops working after ~24h until Blue Lock is
  *    opened" failure this service previously had. The watchdog alarm re-checks
- *    liveness every [WATCHDOG_INTERVAL_MS] and restarts the service; the
- *    alarm broadcast also grants a temporary background-start allowlist.
+ *    liveness every 15 minutes and restarts the service. Android 12+ still
+ *    requires an exemption to start a foreground service from the background;
+ *    Blue Lock requests the battery-optimisation exemption during setup, and
+ *    without it a watchdog restart can be refused (logged, then retried).
  *  - A main-thread watchdog restarts the poll thread if it ever stalls or
  *    dies ([STALL_TIMEOUT_MS] without a tick), so a Throwable on the poll
  *    path can no longer silently disable protection.
@@ -70,7 +74,17 @@ class AppLockService : Service() {
     private var usageAccessLost: Boolean = false
 
     private var nullStreak = 0
-    private var ticksSinceAccessCheck = 0L
+
+    /** Wall-clock end of the previous UsageStats query (incremental polling). */
+    @Volatile
+    private var lastQueryWallMs: Long = 0L
+
+    /** Wall-clock time of the previous (cheap) Usage Access AppOps check. */
+    @Volatile
+    private var lastAccessCheckWallMs: Long = 0L
+
+    private val powerManager get() =
+        getSystemService(Context.POWER_SERVICE) as PowerManager
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -90,6 +104,12 @@ class AppLockService : Service() {
                     pollHandler?.removeCallbacks(poll)
                     pollHandler?.post(poll)
                 }
+                Intent.ACTION_USER_PRESENT -> {
+                    // First unlock after the keyguard: catch the app that is
+                    // already visible without waiting for the next tick.
+                    pollHandler?.removeCallbacks(poll)
+                    pollHandler?.post(poll)
+                }
             }
         }
     }
@@ -105,6 +125,10 @@ class AppLockService : Service() {
                 Log.e(TAG, "poll failed with unexpected error", t)
             } finally {
                 lastTickElapsed = SystemClock.elapsedRealtime()
+                // Screen off: no app can be opened, so only a rare safety
+                // tick remains. ACTION_SCREEN_ON/USER_PRESENT wake the fast
+                // loop immediately; the slow tick only covers a broadcast
+                // that was never delivered.
                 pollHandler?.postDelayed(this, if (screenOn) POLL_MS_ON else POLL_MS_OFF)
             }
         }
@@ -144,19 +168,33 @@ class AppLockService : Service() {
         // Call startForeground first thing: every other initialization can
         // fail without risking the "did not call startForeground()" crash.
         startAsForeground()
+        // The service can be (re)created while the screen is off (sticky
+        // restart / watchdog). Defaulting to "screen on" there caused the
+        // fast 2.5 Hz poll to run all night: read the real state first.
+        screenOn = powerManager.isInteractive
         restartPollThread()
         try {
-            registerReceiver(
+            ContextCompat.registerReceiver(
+                this,
                 screenReceiver,
                 IntentFilter().apply {
                     addAction(Intent.ACTION_SCREEN_OFF)
                     addAction(Intent.ACTION_SCREEN_ON)
-                }
+                    addAction(Intent.ACTION_USER_PRESENT)
+                },
+                ContextCompat.RECEIVER_NOT_EXPORTED
             )
         } catch (e: Exception) {
             Log.w(TAG, "Could not register screenReceiver", e)
         }
         handler.post(pollWatchdog)
+        if (!shouldRun()) {
+            // Started without protection configured: onCreate still had to
+            // call startForeground, but warming a Flutter engine and arming
+            // the watchdog would be wasted work. onStartCommand stops us.
+            Log.i(TAG, "onCreate with protection off - skipping warm/watchdog")
+            return
+        }
         // Alarm-based watchdog: survives OEM kills that also defeat
         // START_STICKY. No-op when protection is disabled.
         ServiceWatchdogReceiver.schedule(applicationContext)
@@ -326,11 +364,22 @@ class AppLockService : Service() {
             return
         }
 
+        val now = System.currentTimeMillis()
+        // Re-read the screen state every tick as well: a broadcast can be
+        // dropped around Doze/process restarts, and a missed SCREEN_ON must
+        // not leave the loop at the slow screen-off cadence.
+        val interactive = powerManager.isInteractive
+        if (interactive != screenOn) {
+            Log.d(TAG, "screen state changed without broadcast: on=$interactive")
+            screenOn = interactive
+        }
+
         // Periodic Usage Access verification (cheap AppOps check, not a
         // usage-events query). Losing Usage Access silently disabled
         // protection before: currentPackage() just returns null forever.
-        if (++ticksSinceAccessCheck >= ACCESS_CHECK_TICKS) {
-            ticksSinceAccessCheck = 0
+        // Time-based so the screen-off cadence cannot stretch the check.
+        if (now - lastAccessCheckWallMs >= ACCESS_CHECK_INTERVAL_MS) {
+            lastAccessCheckWallMs = now
             val granted = NativeBridge.hasUsageAccess(this)
             if (!granted && !usageAccessLost) {
                 usageAccessLost = true
@@ -344,7 +393,6 @@ class AppLockService : Service() {
         }
 
         val t0 = SystemClock.elapsedRealtime()
-        val now = System.currentTimeMillis()
         // Persist the poll timestamp at most every [POLL_TIME_PERSIST_MS]:
         // reconcile only needs coarse granularity, and a SharedPreferences
         // write per tick ran ~216k disk-backed writes per day.
@@ -353,8 +401,22 @@ class AppLockService : Service() {
             LockPrefs.setLastPollTime(this, now)
         }
 
+        // Incremental query: scan only the events since the last poll instead
+        // of re-reading a fixed 5 s backlog several times per second. A gap
+        // larger than [MAX_QUERY_GAP_MS] (screen off, process restart) falls
+        // back to the short initial lookback so stale events are not replayed.
+        val since = if (lastQueryWallMs <= 0L ||
+            lastQueryWallMs > now ||
+            now - lastQueryWallMs > MAX_QUERY_GAP_MS
+        ) {
+            now - ForegroundDetector.DEFAULT_LOOKBACK_MS
+        } else {
+            lastQueryWallMs - ForegroundDetector.DEFAULT_OVERLAP_MS
+        }
+        lastQueryWallMs = now
+
         // Missing result: do not update lastForeground or clear sessions.
-        val fg = ForegroundDetector.currentPackage(this)
+        val fg = ForegroundDetector.currentPackage(this, since, now)
         if (fg == null) {
             nullStreak++
             return
@@ -501,11 +563,22 @@ class AppLockService : Service() {
     companion object {
         private const val TAG = "BlueLock"
 
-        /** Fast interval: screen on, when locking decisions matter. */
-        private const val POLL_MS_ON = 400L
+        /**
+         * Fast interval while the screen is on. 500 ms keeps the lock within
+         * one glance of the protected app opening; combined with incremental
+         * usage-event queries the per-tick cost is a handful of events.
+         */
+        private const val POLL_MS_ON = 500L
 
-        /** Slow interval: screen off - no user can open an app right now. */
-        private const val POLL_MS_OFF = 2_000L
+        /**
+         * Screen off: no app can be opened, so the loop drops to one cheap
+         * safety check per minute. SCREEN_ON / USER_PRESENT restore the fast
+         * cadence immediately.
+         */
+        private const val POLL_MS_OFF = 60_000L
+
+        /** Larger poll gaps are treated as a cold start (short lookback). */
+        private const val MAX_QUERY_GAP_MS = 15_000L
 
         private const val NOTIFICATION_ID = 5100
         private const val USAGE_NOTIFICATION_ID = 5101
@@ -515,8 +588,8 @@ class AppLockService : Service() {
         private const val STALL_TIMEOUT_MS = 15_000L
         private const val WATCHDOG_CHECK_MS = 30_000L
 
-        /** Usage Access re-check cadence (~60s of screen-on ticks). */
-        private const val ACCESS_CHECK_TICKS = 150L
+        /** Usage Access re-check cadence (wall clock, interval-independent). */
+        private const val ACCESS_CHECK_INTERVAL_MS = 60_000L
 
         /** Coarse persistence granularity for the last-poll timestamp. */
         private const val POLL_TIME_PERSIST_MS = 10_000L

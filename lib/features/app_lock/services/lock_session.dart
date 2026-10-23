@@ -57,10 +57,12 @@ class LockSession {
   }
 
   /// Launches the system biometric prompt. Returns:
-  ///  - 'success'     platform-reported authentication success
-  ///  - 'user_cancel' user dismissed the prompt / chose PIN
-  ///  - 'unavailable' no biometrics, busy, or running outside LockActivity
-  ///  - 'failed'      any other platform error (never treated as success)
+  ///  - 'success'            platform-reported authentication success
+  ///  - 'user_cancel'        user dismissed the prompt / chose PIN
+  ///  - 'lockout'            temporary platform lockout; PIN is the fallback
+  ///  - 'lockout_permanent'  too many attempts; device unlock re-enables it
+  ///  - 'unavailable'        no biometrics, busy, or outside LockActivity
+  ///  - 'failed'             any other platform error (never treated as success)
   static Future<String> authenticateBiometric({
     required String packageName,
     required String label,
@@ -81,6 +83,10 @@ class LockSession {
       switch (e.code) {
         case 'user_cancel':
           return 'user_cancel';
+        case 'lockout':
+          return 'lockout';
+        case 'lockout_permanent':
+          return 'lockout_permanent';
         case 'unavailable':
         case 'busy':
           return 'unavailable';

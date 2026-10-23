@@ -23,6 +23,12 @@ class AppStorage {
   static const _kPinSalt = 'pin_salt';
   static const _kPinVerifier = 'pin_verifier';
 
+  // Failed-attempt throttling. Persisted (not in memory) so reopening the
+  // activity or restarting the process cannot reset the counter.
+  static const _kPinFailedAttempts = 'pin_failed_attempts';
+  static const _kPinLockoutUntil = 'pin_lockout_until_ms';
+  static const _kPinLockoutStage = 'pin_lockout_stage';
+
   final SharedPreferences? _prefs;
   final FlutterSecureStorage _secure;
 
@@ -42,6 +48,15 @@ class AppStorage {
       _resolvedPrefs = await SharedPreferences.getInstance();
     }
   }
+
+  /// Re-reads preferences from disk.
+  ///
+  /// Blue Lock can run two Dart isolates in one process (dashboard engine +
+  /// pre-warmed lock engine), and each isolate caches SharedPreferences
+  /// values. Reloading before security-sensitive reads (PIN attempt state)
+  /// keeps a lockout granted in one engine visible in the other instead of
+  /// letting the second engine overwrite it with a stale counter.
+  Future<void> reloadPreferences() => prefs.reload();
 
   // ---- PIN verifier (secure) ----
 
@@ -76,6 +91,29 @@ class AppStorage {
     await _secureDelete(_kPinSalt);
     await _secureDelete(_kPinVerifier);
   }
+
+  // ---- PIN failed-attempt throttling ----
+
+  int get pinFailedAttempts => prefs.getInt(_kPinFailedAttempts) ?? 0;
+
+  /// Wall-clock time before which PIN verification is refused (0 = none).
+  int get pinLockoutUntilMs => prefs.getInt(_kPinLockoutUntil) ?? 0;
+
+  /// How many lockout windows have already been served; drives the backoff.
+  int get pinLockoutStage => prefs.getInt(_kPinLockoutStage) ?? 0;
+
+  Future<void> setPinAttemptState({
+    required int failedAttempts,
+    required int lockoutUntilMs,
+    required int lockoutStage,
+  }) async {
+    await prefs.setInt(_kPinFailedAttempts, failedAttempts);
+    await prefs.setInt(_kPinLockoutUntil, lockoutUntilMs);
+    await prefs.setInt(_kPinLockoutStage, lockoutStage);
+  }
+
+  Future<void> clearPinAttemptState() =>
+      setPinAttemptState(failedAttempts: 0, lockoutUntilMs: 0, lockoutStage: 0);
 
   // ---- Settings ----
 

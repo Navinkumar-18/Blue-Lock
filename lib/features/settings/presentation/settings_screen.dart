@@ -53,7 +53,7 @@ class SettingsScreen extends StatelessWidget {
               _PermissionsSection(controller: controller),
               const SizedBox(height: 18),
               const SectionTitle('About'),
-              _aboutCard(),
+              _AboutSection(controller: controller),
             ],
           ),
         ),
@@ -141,7 +141,36 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _aboutCard() {
+}
+
+/// About card: shows the version actually installed on the device instead of
+/// a hardcoded string. Falls back to "unavailable" on platforms without the
+/// native bridge (tests/desktop).
+class _AboutSection extends StatefulWidget {
+  const _AboutSection({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_AboutSection> createState() => _AboutSectionState();
+}
+
+class _AboutSectionState extends State<_AboutSection> {
+  String? _version;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    final version = await widget.controller.native.getAppVersion();
+    if (mounted) setState(() => _version = version);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return BlueLockCard(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -156,9 +185,9 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          const Text(
-            'Version 1.0.0',
-            style: TextStyle(
+          Text(
+            _version == null ? 'Version unavailable' : 'Version $_version',
+            style: const TextStyle(
               fontSize: 13,
               color: AppColors.textSecondary,
             ),

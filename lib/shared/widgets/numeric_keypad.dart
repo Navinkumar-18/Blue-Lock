@@ -31,6 +31,7 @@ class NumericKeypad extends StatelessWidget {
             if (key == 'back') {
               return _KeypadKey(
                 onTap: onBackspace,
+                semanticLabel: 'Delete last digit',
                 child: const Icon(
                   Icons.backspace_outlined,
                   size: 22,
@@ -40,6 +41,7 @@ class NumericKeypad extends StatelessWidget {
             }
             return _KeypadKey(
               onTap: () => onDigit(key),
+              semanticLabel: 'Digit $key',
               child: Text(
                 key,
                 style: const TextStyle(
@@ -57,22 +59,31 @@ class NumericKeypad extends StatelessWidget {
 }
 
 class _KeypadKey extends StatelessWidget {
-  const _KeypadKey({required this.onTap, required this.child});
+  const _KeypadKey({
+    required this.onTap,
+    required this.semanticLabel,
+    required this.child,
+  });
 
   final VoidCallback onTap;
+  final String semanticLabel;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      child: Material(
-        color: AppColors.keypadKey,
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
-          onTap: onTap,
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        child: Material(
+          color: AppColors.keypadKey,
           borderRadius: BorderRadius.circular(16),
-          child: SizedBox(width: 76, height: 64, child: Center(child: child)),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: SizedBox(width: 76, height: 64, child: Center(child: child)),
+          ),
         ),
       ),
     );

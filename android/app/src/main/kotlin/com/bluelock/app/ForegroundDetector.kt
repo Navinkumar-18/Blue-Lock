@@ -7,12 +7,25 @@ import android.content.Context
 /** Detects the current foreground package via UsageStatsManager. */
 object ForegroundDetector {
 
-    fun currentPackage(context: Context): String? {
+    /**
+     * Newest foreground package in the [sinceMs] .. [endMs] window.
+     *
+     * Callers should pass the end of the previous poll as [sinceMs] so each
+     * query scans only the events that arrived between two ticks instead of
+     * re-reading a fixed 5-second backlog 2-3 times per second. A small
+     * overlap (see [DEFAULT_OVERLAP_MS]) keeps events that land on a poll
+     * boundary from being missed.
+     */
+    fun currentPackage(
+        context: Context,
+        sinceMs: Long = System.currentTimeMillis() - DEFAULT_LOOKBACK_MS,
+        endMs: Long = System.currentTimeMillis()
+    ): String? {
         val usm = context.getSystemService(Context.USAGE_STATS_SERVICE)
             as? UsageStatsManager ?: return null
-        val now = System.currentTimeMillis()
+        if (endMs <= sinceMs) return null
         return try {
-            val events = usm.queryEvents(now - 5_000, now)
+            val events = usm.queryEvents(sinceMs, endMs)
             val event = UsageEvents.Event()
             var latestPackage: String? = null
             var latestTime = 0L
@@ -76,4 +89,10 @@ object ForegroundDetector {
             null
         }
     }
+
+    /** Backlog used on the first poll after service/process start. */
+    const val DEFAULT_LOOKBACK_MS = 5_000L
+
+    /** Overlap between consecutive incremental polls (clock/boundary safety). */
+    const val DEFAULT_OVERLAP_MS = 250L
 }

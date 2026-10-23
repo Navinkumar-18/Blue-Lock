@@ -27,9 +27,9 @@ class _EnterPinScreenState extends State<EnterPinScreen> {
   Future<void> _onCompleted(String pin) async {
     if (_checking) return;
     setState(() => _checking = true);
-    bool ok;
+    PinVerification result;
     try {
-      ok = await widget.pinService.verifyPin(pin);
+      result = await widget.pinService.verifyPinDetailed(pin);
     } catch (_) {
       // Storage/crypto failure - do not report it as an incorrect PIN.
       if (!mounted) return;
@@ -40,10 +40,10 @@ class _EnterPinScreenState extends State<EnterPinScreen> {
     }
     if (!mounted) return;
     setState(() => _checking = false);
-    if (ok) {
+    if (result.isSuccess) {
       widget.onVerified();
     } else {
-      _panelKey.currentState?.showError('Incorrect PIN. Try again.');
+      _panelKey.currentState?.showError(result.message);
     }
   }
 

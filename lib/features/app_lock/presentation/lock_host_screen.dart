@@ -99,11 +99,18 @@ class LockHostScreenState extends State<LockHostScreen> {
     // ValueKey with generation: every showLock (and package retarget)
     // remounts AppLockScreen so PIN entry state, error banners and the
     // biometric prompt lifecycle start clean per lock session.
-    return AppLockScreen(
-      key: ValueKey('$pkg#$_generation'),
-      packageName: pkg,
-      controller: widget.controller,
-      nativeLock: true,
+    // A back press must never pop the lock route and let Flutter's root
+    // navigator call SystemNavigator.pop() (which finishes LockActivity and
+    // briefly reveals the protected app). Dialogs pushed above this route
+    // still pop normally.
+    return PopScope(
+      canPop: false,
+      child: AppLockScreen(
+        key: ValueKey('$pkg#$_generation'),
+        packageName: pkg,
+        controller: widget.controller,
+        nativeLock: true,
+      ),
     );
   }
 }

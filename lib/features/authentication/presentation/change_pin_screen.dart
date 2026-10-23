@@ -49,9 +49,9 @@ class _ChangePinScreenState extends State<ChangePinScreen> {
           _busy = true;
           _error = null;
         });
-        bool ok = false;
+        PinVerification result;
         try {
-          ok = await widget.pinService.verifyPin(pin);
+          result = await widget.pinService.verifyPinDetailed(pin);
         } catch (_) {
           if (!mounted) return;
           setState(() {
@@ -61,7 +61,7 @@ class _ChangePinScreenState extends State<ChangePinScreen> {
           return;
         }
         if (!mounted) return;
-        if (ok) {
+        if (result.isSuccess) {
           setState(() {
             _busy = false;
             _currentPin = pin;
@@ -71,7 +71,7 @@ class _ChangePinScreenState extends State<ChangePinScreen> {
         } else {
           setState(() {
             _busy = false;
-            _error = 'Incorrect PIN. Try again.';
+            _error = result.message;
           });
         }
 

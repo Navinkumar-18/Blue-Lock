@@ -20,24 +20,30 @@ class PinIndicators extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = error ? AppColors.danger : AppColors.primary;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(length, (index) {
-        final isFilled = index < filled;
-        return Container(
-          width: dotSize,
-          height: dotSize,
-          margin: const EdgeInsets.symmetric(horizontal: 7),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: isFilled ? color : Colors.transparent,
-            border: Border.all(
-              color: isFilled ? color : AppColors.border,
-              width: 2,
+    return Semantics(
+      liveRegion: true,
+      label: error
+          ? 'PIN error, $filled of $length digits entered'
+          : '$filled of $length digits entered',
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: List.generate(length, (index) {
+          final isFilled = index < filled;
+          return Container(
+            width: dotSize,
+            height: dotSize,
+            margin: const EdgeInsets.symmetric(horizontal: 7),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isFilled ? color : Colors.transparent,
+              border: Border.all(
+                color: isFilled ? color : AppColors.border,
+                width: 2,
+              ),
             ),
-          ),
-        );
-      }),
+          );
+        }),
+      ),
     );
   }
 }

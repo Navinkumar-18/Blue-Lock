@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/state/app_controller.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../authentication/services/pin_service.dart';
 import '../../../shared/widgets/branding.dart';
 import '../../../shared/widgets/pin_entry_panel.dart';
 import '../services/biometric_status.dart';
@@ -25,6 +26,9 @@ class _SelfLockScreenState extends State<SelfLockScreen> {
   BiometricStatus _biometric = BiometricStatus.unavailable;
   bool _biometricPromptActive = false;
   bool _autoPrompted = false;
+
+  /// Permanent platform lockout: hide the biometric offer for this mount.
+  bool _biometricBlocked = false;
 
   @override
   void initState() {
@@ -72,6 +76,20 @@ class _SelfLockScreenState extends State<SelfLockScreen> {
       return;
     }
     if (outcome == 'user_cancel') return; // user chose the PIN keypad
+    if (outcome == 'lockout') {
+      _panelKey.currentState?.showError(
+        'Too many biometric attempts. Use your PIN or try again shortly.',
+      );
+      return;
+    }
+    if (outcome == 'lockout_permanent') {
+      if (mounted) setState(() => _biometricBlocked = true);
+      _panelKey.currentState?.showError(
+        'Biometric unlock is locked. Enter your PIN. Unlock your device '
+        'with its PIN, pattern or password to re-enable it.',
+      );
+      return;
+    }
     // Failure or unavailability: the PIN keypad remains as the fallback.
     await _reportBiometricNotGranted(outcome);
   }
@@ -94,13 +112,22 @@ class _SelfLockScreenState extends State<SelfLockScreen> {
   Future<void> _onPinCompleted(String pin) async {
     if (_verifying || _unlocked) return;
     setState(() => _verifying = true);
-    final ok = await widget.controller.pinService.verifyPin(pin);
+    PinVerification result;
+    try {
+      result = await widget.controller.pinService.verifyPinDetailed(pin);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _verifying = false);
+      _panelKey.currentState
+          ?.showError('Could not verify your PIN. Try again.');
+      return;
+    }
     if (!mounted) return;
     setState(() => _verifying = false);
-    if (ok) {
+    if (result.isSuccess) {
       await _grant();
     } else {
-      _panelKey.currentState?.showError('Incorrect PIN. Try again.');
+      _panelKey.currentState?.showError(result.message);
     }
   }
 
@@ -196,7 +223,7 @@ class _SelfLockScreenState extends State<SelfLockScreen> {
                   forgotLabel: 'Forgot PIN?',
                   onForgot: _forgotPin,
                 ),
-                if (_biometric.canUse)
+                if (_biometric.canUse && !_biometricBlocked)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: TextButton.icon(

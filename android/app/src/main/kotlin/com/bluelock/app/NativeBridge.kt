@@ -17,6 +17,7 @@ import android.os.Process
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
+import androidx.core.content.pm.PackageInfoCompat
 import androidx.fragment.app.FragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -81,6 +82,7 @@ object NativeBridge {
         result: MethodChannel.Result
     ) {
         when (method) {
+            "getAppVersion" -> result.success(appVersion(context))
             "getInstalledApps" -> {
                 val t0 = SystemClock.elapsedRealtime()
                 ioExecutor.execute {
@@ -259,14 +261,7 @@ object NativeBridge {
                 activity = activity,
                 title = "Blue Lock",
                 subtitle = "Authenticate to open $label"
-            ) { outcome, detail ->
-                when {
-                    outcome == "success" -> result.success(true)
-                    outcome == "user_cancel" ->
-                        result.error("user_cancel", detail, null)
-                    else -> result.error("auth_failed", detail, null)
-                }
-            }
+            ) { outcome, detail -> BiometricAuth.reply(result, outcome, detail) }
         ) {
             BiometricAuth.Start.READY -> Unit // reply arrives from the session
             BiometricAuth.Start.BUSY ->
@@ -276,6 +271,18 @@ object NativeBridge {
             BiometricAuth.Start.NO_BIOMETRICS ->
                 result.error("unavailable", "No enrolled biometrics", null)
         }
+    }
+
+    /** Installed version name/code, read from the package manager (no network). */
+    private fun appVersion(context: Context): Map<String, Any?>? = try {
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        mapOf(
+            "versionName" to (info.versionName ?: ""),
+            "versionCode" to PackageInfoCompat.getLongVersionCode(info)
+        )
+    } catch (e: PackageManager.NameNotFoundException) {
+        Log.w(TAG, "could not read app version", e)
+        null
     }
 
     private fun getInstalledApps(context: Context): List<Map<String, Any?>> {

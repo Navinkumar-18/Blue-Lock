@@ -21,7 +21,10 @@
     <application
         android:label="Blue Lock"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/backup_rules">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -51,7 +54,6 @@
             android:launchMode="singleInstance"
             android:excludeFromRecents="true"
             android:taskAffinity=""
-            android:noHistory="true"
             android:theme="@style/LockTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -59,6 +61,7 @@
         <service
             android:name=".AppLockService"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"

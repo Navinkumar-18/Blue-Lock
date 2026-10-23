@@ -59,6 +59,10 @@ object LockPrefs {
         val editor = prefs(context).edit()
         if (timeoutSeconds <= 0) {
             editor.putBoolean("fg_only_$packageName", true)
+                // Do not leave an older timed session behind: after a
+                // screen-off the flag is cleared, and the stale expiry would
+                // otherwise keep the app unlocked until it elapses.
+                .remove("expiry_$packageName")
         } else {
             val expiry = System.currentTimeMillis() + timeoutSeconds * 1000L
             editor.putLong("expiry_$packageName", expiry)

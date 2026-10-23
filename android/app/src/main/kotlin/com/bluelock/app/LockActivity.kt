@@ -10,6 +10,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.view.WindowManager
+import androidx.activity.OnBackPressedCallback
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -84,6 +85,15 @@ class LockActivity : FlutterFragmentActivity() {
                 "(cachedEngine=$cached recreated=${savedInstanceState != null})"
         )
         super.onCreate(savedInstanceState)
+        // The lock is not dismissible with Back. Without this, Back popped
+        // the Flutter route (finishing LockActivity) and briefly revealed the
+        // protected app until the 500 ms poll relaunched the lock. The user
+        // must authenticate, press Home, or leave the app.
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                Log.d(TAG, "back ignored while lock screen is active")
+            }
+        })
         if (cached) {
             // Warm path: the Dart lock host is already running on the cached
             // engine - push the protected package so the PIN screen replaces
@@ -155,7 +165,7 @@ class LockActivity : FlutterFragmentActivity() {
         }
         // Device hidden: screen off or keyguard up. The user sees and can
         // interact with nothing right now, so finishing would only make the
-        // service launch this lock again on its next 400ms tick - and it
+        // service launch this lock again on its next 500 ms tick - and it
         // would stop immediately again, looping for as long as the device
         // stays hidden. Keep the lock alive instead: it resumes the moment
         // the device becomes visible, still unauthenticated.
@@ -255,12 +265,7 @@ class LockActivity : FlutterFragmentActivity() {
                 subtitle = "Authenticate to open $label"
             ) { outcome, detail ->
                 Log.d(TAG, "biometric outcome=$outcome for $pkg")
-                when {
-                    outcome == "success" -> result.success(true)
-                    outcome == "user_cancel" ->
-                        result.error("user_cancel", detail, null)
-                    else -> result.error("auth_failed", detail, null)
-                }
+                BiometricAuth.reply(result, outcome, detail)
             }
         ) {
             BiometricAuth.Start.READY -> {

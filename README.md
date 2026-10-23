@@ -9,7 +9,7 @@
 
   [![Flutter](https://img.shields.io/badge/Flutter-3.47.7-02569B?logo=flutter&logoColor=white)](https://flutter.dev)
   [![Dart](https://img.shields.io/badge/Dart-3.13.5-0175C2?logo=dart&logoColor=white)](https://dart.dev)
-  [![Android](https://img.shields.io/badge/Android-API%2026%2B-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
+  [![Android](https://img.shields.io/badge/Android-API%2024%2B-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
   [![Kotlin](https://img.shields.io/badge/Kotlin-Native%20FGS-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
   [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -27,7 +27,7 @@
 
 - 🔐 **Dual Security Modes**: Unlock apps with a 4-digit PIN or native Biometrics (Fingerprint / Face Unlock via AndroidX `BiometricPrompt`).
 - ⚡ **Real-Time Protection**: Lightweight Kotlin background service (`AppLockService`) monitors foreground transitions with minimal battery impact.
-- 🛡️ **Bypass-Resistant Lock Screen**: Native `LockActivity` prevents dismissal via Back gesture or Recent Apps view (`excludeFromRecents`, `noHistory`).
+- 🛡️ **Bypass-Resistant Lock Screen**: Full-screen native `LockActivity` ignores Back, is excluded from Recents, and survives screen-off/keyguard instead of flashing the protected app.
 - 📱 **App Manager**: Browse and search all installed applications; toggle protection with a single tap.
 - 🔄 **Reboot Resilience**: Automatically resumes background protection upon device restart via `BootReceiver` (`BOOT_COMPLETED`).
 - 🔑 **Cryptographic Security**: PIN verifiers are salted and hashed using PBKDF2 (HMAC-SHA256) and stored in encrypted storage (`flutter_secure_storage`).
@@ -112,7 +112,7 @@ blue_lock/
 ### Prerequisites
 
 - [Flutter SDK](https://docs.flutter.dev/get-started/install) (`^3.13.5` / Flutter 3.47+)
-- [Android SDK](https://developer.android.com/studio) (API level 26+ / Android 8.0+)
+- [Android SDK](https://developer.android.com/studio) (API level 24+ / Android 7.0+)
 - Java / JDK 17+
 
 ### Installation & Run
@@ -152,6 +152,24 @@ To effectively monitor and protect apps, Blue Lock requests the following Androi
 | `RECEIVE_BOOT_COMPLETED` | Restarts monitoring automatically after device reboot |
 | `POST_NOTIFICATIONS` | Displays the persistent foreground service notification |
 | `USE_BIOMETRIC` | Enables fingerprint / face authentication |
+
+Blue Lock does **not** request `INTERNET`: all foreground detection and lock
+decisions are local, and the app cannot transmit usage, PIN or biometric data.
+Android backup is disabled (`allowBackup="false"`), so settings and the PIN
+enrolment are intentionally **not** restored by cloud backup or device-to-device
+migration; set them up again after moving to a new device.
+
+### Battery and reliability
+
+- Polls foreground transitions every **500 ms while the screen is on** and once
+  per **60 s while the screen is off**, with an immediate poll on screen-on /
+  unlock.
+- Reads UsageStats events incrementally (last query + a 250 ms overlap) instead
+  of re-scanning a fixed 5 s window on every tick.
+- Uses a `specialUse` foreground service, `START_STICKY`, boot/update recovery
+  and a 15-minute alarm watchdog for OEMs that kill background services.
+- Some OEMs still require manual battery-optimisation exemption; Android will
+  not restart an app after the user force-stops it.
 
 ---
 

@@ -24,9 +24,11 @@ import android.util.Log
  *    wake-lock grabbing and no tight restart loop.
  *  - The receiver is a no-op while protection is disabled (and stops
  *    rescheduling), so it never fights the user's explicit choice.
- *  - The alarm broadcast also grants a short background-start allowlist,
- *    so AppLockService.ensureRunning() can legally start the foreground
- *    service even while the app is otherwise in the background.
+ *  - A background foreground-service start still needs an Android 12+
+ *    exemption. Blue Lock requests the battery-optimisation exemption
+ *    during setup; when the user grants it, the watchdog can legally start
+ *    AppLockService from the background. If it is not granted, the start can
+ *    be refused; the next tick retries and the failure is logged.
  *  - Every re-entry logs its decision: restart attempted, skipped because
  *    already running, or skipped because protection is off.
  *
