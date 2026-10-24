@@ -12,6 +12,7 @@ import 'features/authentication/presentation/choose_lock_type_screen.dart';
 import 'features/authentication/presentation/create_credential_screen.dart';
 import 'features/authentication/presentation/enter_pin_screen.dart';
 import 'features/authentication/presentation/recovery_code_setup_screen.dart';
+import 'features/chat_lock/presentation/chat_lock_screen.dart';
 import 'features/dashboard/presentation/home_shell.dart';
 import 'features/onboarding/presentation/onboarding_screen.dart';
 import 'features/onboarding/presentation/splash_screen.dart';
@@ -101,11 +102,18 @@ class _BlueLockAppState extends State<BlueLockApp> with WidgetsBindingObserver {
           // cached engine) land on the lock host: it renders the credential
           // screen for the route package immediately, or waits for the native
           // "showLock" push when the engine was booted idle.
-          final packageName = name.substring('/lock/'.length);
+          //
+          // Chat Lock uses the same route with a username query parameter:
+          // "lock/com.instagram.android?chat=jane_doe". The query is parsed
+          // here so the cold-engine path carries the conversation target too.
+          final uri = Uri.parse(name);
+          final packageName = uri.path.substring('/lock/'.length);
+          final chat = uri.queryParameters['chat'];
           return MaterialPageRoute(
             builder: (_) => LockHostScreen(
               controller: controller,
               initialPackage: packageName.isEmpty ? null : packageName,
+              initialChat: (chat == null || chat.isEmpty) ? null : chat,
             ),
             settings: settings,
           );
@@ -114,6 +122,11 @@ class _BlueLockAppState extends State<BlueLockApp> with WidgetsBindingObserver {
           case '/':
             return MaterialPageRoute(
               builder: (_) => SplashScreen(controller: controller),
+              settings: settings,
+            );
+          case '/chat-lock':
+            return MaterialPageRoute(
+              builder: (_) => _guarded(ChatLockScreen(controller: controller)),
               settings: settings,
             );
           case '/onboarding':

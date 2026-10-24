@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 
 import '../../features/app_lock/services/biometric_status.dart';
+import '../../features/chat_lock/models/chat_lock_state.dart';
 import '../../features/installed_apps/models/installed_app.dart';
 import '../authentication/authentication_type.dart';
 
@@ -166,6 +167,38 @@ class NativeBridge {
   Future<String?> getForegroundPackage() async {
     return _invoke<String>('getForegroundPackage');
   }
+
+  // ---- experimental Instagram Chat Lock ----
+  //
+  // Only a normalised username and configuration cross this channel. The
+  // native accessibility service never sends message text to Dart.
+
+  Future<bool> isInstagramInstalled() async =>
+      await _invoke<bool>('isInstagramInstalled') ?? false;
+
+  Future<bool> isChatAccessibilityEnabled() async =>
+      await _invoke<bool>('isChatAccessibilityEnabled') ?? false;
+
+  Future<void> openChatAccessibilitySettings() =>
+      _invoke<void>('openChatAccessibilitySettings');
+
+  Future<ChatLockState> getChatLockState() async {
+    final raw = await _invoke<Map<dynamic, dynamic>>('getChatLockState');
+    return ChatLockState.fromMap(raw);
+  }
+
+  Future<void> setChatLockEnabled(bool enabled) =>
+      _invoke<void>('setChatLockEnabled', enabled);
+
+  Future<void> setChatRelockTimeout(int seconds) =>
+      _invoke<void>('setChatRelockTimeout', seconds);
+
+  Future<void> setProtectedChats(List<String> chats) =>
+      _invoke<void>('setProtectedChats', chats);
+
+  /// Expires every conversation session without changing the protected list.
+  Future<void> clearChatLockSessions() =>
+      _invoke<void>('clearChatLockSessions');
 
   Future<BiometricStatus> getBiometricStatus() async {
     final raw = await _invoke<Map<dynamic, dynamic>>('getBiometricStatus');

@@ -135,6 +135,8 @@ class SettingsScreen extends StatelessWidget {
             },
           ),
           const Divider(),
+          _ChatLockTile(controller: controller),
+          const Divider(),
           _RecoveryTile(controller: controller),
           const Divider(),
           ListTile(
@@ -181,6 +183,64 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
+}
+
+/// Entry point for the experimental Instagram Chat Lock. The route is wrapped
+/// in [SelfAuthGate] by the app router, so opening the management screen (and
+/// therefore viewing or removing protected conversations) requires the same
+/// Blue Lock credential as the rest of the app.
+class _ChatLockTile extends StatelessWidget {
+  const _ChatLockTile({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        final enabled = controller.chatLockEnabled;
+        final count = controller.protectedChats.length;
+        final subtitle = !enabled
+            ? 'Experimental - off'
+            : count == 0
+                ? 'On - no conversations protected yet'
+                : 'On - $count conversation${count == 1 ? '' : 's'} protected';
+        return ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.chat_bubble_outline_rounded,
+              color: AppColors.primary),
+          title: const Text(
+            'Instagram Chat Lock',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          subtitle: Text(
+            subtitle,
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              StatusPill(
+                label: enabled ? 'On' : 'Off',
+                tone: enabled ? StatusTone.success : StatusTone.neutral,
+              ),
+              const SizedBox(width: 4),
+              const Icon(Icons.chevron_right, color: AppColors.textSecondary),
+            ],
+          ),
+          onTap: () => Navigator.of(context).pushNamed('/chat-lock'),
+        );
+      },
+    );
+  }
 }
 
 /// Recovery-code entry point. Existing installations see "Set up" here (a

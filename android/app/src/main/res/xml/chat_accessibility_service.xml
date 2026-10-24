@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Deliberately minimal accessibility capability:
+    - canRetrieveWindowContent: required to identify the conversation header.
+    - no canPerformGestures, no touch exploration, no key filtering.
+    - no packageNames filter: non-Instagram window-state events are needed to
+      notice that the user left Instagram. They are used only for a Usage
+      Access foreground check; their content is never read.
+    - notificationTimeout coalesces the event storm on a busy chat.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds|flagIncludeNotImportantViews"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/chat_accessibility_description"
+    android:notificationTimeout="300"
+    android:settingsActivity="com.bluelock.app.MainActivity" />

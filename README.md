@@ -28,6 +28,7 @@
 - 🔐 **Multiple Lock Methods**: Protect apps with a 4-digit PIN, 6-digit PIN, 3 × 3 pattern or password, plus native Biometrics (Fingerprint / Face Unlock via AndroidX `BiometricPrompt`). The method can be changed in Settings after verifying the current credential.
 - 🆘 **Verified Recovery**: A 16-character recovery code (80 bits, displayed once during setup) or enrolled biometrics can authorise a forgotten-lock recovery. The new credential is configured and confirmed before the old one is replaced.
 - ⚡ **Real-Time Protection**: Lightweight Kotlin background service (`AppLockService`) monitors foreground transitions with minimal battery impact.
+- 💬 **Experimental Instagram Chat Lock (best-effort)**: Optionally require the existing Blue Lock credential when a protected Instagram DM conversation is opened. Detection is local, reads only a username-shaped header value through an optional Android accessibility service, and never reads or stores message text. See [CHAT_LOCK_INVESTIGATION.md](CHAT_LOCK_INVESTIGATION.md) before enabling it.
 - 🛡️ **Bypass-Resistant Lock Screen**: Full-screen native `LockActivity` ignores Back, is excluded from Recents, and survives screen-off/keyguard instead of flashing the protected app.
 - 📱 **App Manager**: Browse and search all installed applications; toggle protection with a single tap.
 - 🔄 **Reboot Resilience**: Automatically resumes background protection upon device restart via `BootReceiver` (`BOOT_COMPLETED`).
@@ -82,6 +83,10 @@ blue_lock/
 │       │   ├── AppLockService.kt      # Foreground service detecting app switches
 │       │   ├── BiometricAuth.kt       # BiometricPrompt integration
 │       │   ├── BootReceiver.kt        # Auto-restart on device reboot
+│       │   ├── ChatAccessibilityService.kt # Experimental Instagram DM detector
+│       │   ├── ChatIdentity.kt        # Username normalisation rules
+│       │   ├── ChatLockCoordinator.kt # Chat gate decisions and launch suppression
+│       │   ├── ChatLockPrefs.kt       # Chat settings and per-chat sessions
 │       │   ├── ForegroundDetector.kt  # UsageStatsManager event polling
 │       │   ├── LockActivity.kt        # Native lock screen overlay
 │       │   ├── LockPrefs.kt           # Shared preferences for locked package list
@@ -97,6 +102,7 @@ blue_lock/
 │   ├── features/
 │   │   ├── app_lock/                  # Lock screens & session management
 │   │   ├── authentication/            # PIN creation, confirmation, change flows
+│   │   ├── chat_lock/                 # Experimental Instagram chat lock UI/models
 │   │   ├── dashboard/                 # Main home dashboard
 │   │   ├── installed_apps/            # Installed apps list & lock toggle
 │   │   ├── onboarding/                # First-launch onboarding & splash
@@ -160,6 +166,47 @@ Android backup is disabled (`allowBackup="false"`), so settings and the PIN
 enrolment are intentionally **not** restored by cloud backup or device-to-device
 migration; set them up again after moving to a new device.
 
+### Experimental Instagram Chat Lock (best-effort)
+
+Settings → **Instagram Chat Lock** can require the same Blue Lock credential
+(PIN, pattern, password or biometrics) for individual Instagram DM
+conversations. It is **off by default** and is explicitly experimental.
+
+1. Turn on **Instagram chat protection**.
+2. Add a conversation by its **username** (for example `jane_doe`), not by the
+   display name shown in the chat header. Display names are not unique and are
+   rejected. Group chats are not supported.
+3. Open **Accessibility access** and enable **Blue Lock Chat Lock** in Android
+   Settings. Blue Lock can open that page but cannot grant the permission
+   itself.
+4. Use **Detection test** after opening a DM: it reports the identifier the
+   service could read from the visible header, or explains that the
+   conversation is unidentifiable.
+
+What it does and does not do:
+
+- Reads only a username-shaped value from Instagram's visible top header. It
+  does not read, store or transmit message text, media or notifications, does
+  not take screenshots, does not use OCR, has no network access and never taps
+  or sends anything in Instagram.
+- Reuses the existing `LockActivity`, credential verification, biometric prompt
+  and rate limiting. A conversation session is stored under its own native key
+  and never grants the app-level session.
+- Relocks immediately after leaving the conversation by default, or after a
+  configurable 30 s / 1 min / 5 min grace period.
+- **Cannot guarantee protection.** Instagram may expose only a display name, a
+  group name or a changed layout; in that case the conversation is reported as
+  unidentifiable and Blue Lock deliberately does not guess. Content can also be
+  visible briefly before Android reports the screen and the lock covers it.
+  Notification previews, Recents thumbnails, other devices and the browser are
+  unaffected. See [CHAT_LOCK_INVESTIGATION.md](CHAT_LOCK_INVESTIGATION.md) for
+  the full threat model, bypasses and the unverified status on real Instagram
+  builds.
+
+Disabling Chat Lock expires all conversation sessions; revoking the
+accessibility permission is always a user action in Android Settings. Neither
+changes existing app-lock protection or saved settings.
+
 ### Forgot lock and recovery
 
 Tapping **Forgot PIN / pattern / password?** never clears the credential or the
@@ -204,7 +251,7 @@ cannot be removed from inside Blue Lock.
 
 ## 🧪 Testing
 
-Run the Flutter test suite (108 unit/widget tests):
+Run the Flutter test suite (122 unit/widget tests):
 
 ```bash
 flutter test

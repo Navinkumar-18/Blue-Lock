@@ -23,6 +23,7 @@ class BootReceiver : BroadcastReceiver() {
                 // an app replacement: the protected app is no longer in the
                 // foreground.
                 LockPrefs.clearForegroundOnlySessions(context)
+                ChatLockPrefs.clearForegroundOnlySessions(context)
                 LockPrefs.setLastForeground(context, null)
                 LockPrefs.setLastPollTime(context, 0L)
                 if (LockPrefs.lockEnabled(context) &&

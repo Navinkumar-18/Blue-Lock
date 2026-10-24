@@ -73,15 +73,21 @@ object LockEngineCache {
     }
 
     /**
-     * Pushes the protected package to the Dart lock host so it replaces the
-     * idle placeholder. Fire-and-forget: on the warm path the Dart handler
-     * was registered during the engine's boot, long before any attach.
+     * Pushes the protected package (and optional conversation username) to
+     * the Dart lock host so it replaces the idle placeholder. Fire-and-forget:
+     * on the warm path the Dart handler was registered during the engine's
+     * boot, long before any attach.
      */
-    fun showLock(packageName: String) {
+    fun showLock(packageName: String, chatUsername: String? = null) {
         val e = engine ?: return
+        val target = if (chatUsername.isNullOrBlank()) {
+            packageName
+        } else {
+            mapOf("package" to packageName, "chat" to chatUsername)
+        }
         try {
             MethodChannel(e.dartExecutor.binaryMessenger, LOCK_CHANNEL)
-                .invokeMethod("showLock", packageName)
+                .invokeMethod("showLock", target)
         } catch (t: Throwable) {
             // The engine can be mid-teardown after a low-memory kill; never
             // let a best-effort push crash the lock activity.
@@ -105,19 +111,17 @@ object LockEngineCache {
                 val activity = currentActivity?.get()
                 when (call.method) {
                     "unlock" -> {
-                        val pkg = (call.arguments as? String)
-                            ?: activity?.lockedPackage
-                        if (pkg == null) {
-                            result.error("bad_args", "package required", null)
-                        } else {
-                            Log.d(TAG, "unlock accepted for $pkg - dismissing lock")
-                            LockPrefs.unlock(
-                                context,
-                                pkg,
-                                LockPrefs.relockTimeout(context)
-                            )
+                        val ok = LockActivity.applyUnlock(
+                            context,
+                            call.arguments,
+                            activity?.lockedPackage,
+                            activity?.lockedChat
+                        )
+                        if (ok) {
                             result.success(null)
                             activity?.finish()
+                        } else {
+                            result.error("bad_args", "target required", null)
                         }
                     }
                     // No unauthenticated reset method: recovery is verified

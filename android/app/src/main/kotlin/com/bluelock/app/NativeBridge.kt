@@ -1,6 +1,7 @@
 package com.bluelock.app
 
 import android.app.AppOpsManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -206,6 +207,56 @@ object NativeBridge {
             }
             "getForegroundPackage" ->
                 result.success(ForegroundDetector.currentPackage(context))
+            // ---- experimental Instagram Chat Lock ----
+            "isInstagramInstalled" ->
+                result.success(isInstagramInstalled(context))
+            "isChatAccessibilityEnabled" ->
+                result.success(isChatAccessibilityEnabled(context))
+            "openChatAccessibilitySettings" -> {
+                openChatAccessibilitySettings(context)
+                result.success(null)
+            }
+            "getChatLockState" ->
+                result.success(chatLockState(context))
+            "setChatLockEnabled" -> {
+                val enabled = arguments == true
+                ChatLockPrefs.setEnabled(context, enabled)
+                if (enabled) {
+                    ChatAccessibilityService.requestScan()
+                } else {
+                    ChatLockCoordinator.onMonitoringDisabled(context)
+                }
+                result.success(null)
+            }
+            "setChatRelockTimeout" -> {
+                val timeout = (arguments as? Int) ?: 0
+                ChatLockPrefs.setRelockTimeout(context, timeout)
+                result.success(null)
+            }
+            "setProtectedChats" -> {
+                val list = (arguments as? List<*>)?.filterIsInstance<String>()
+                    ?: emptyList()
+                val previous = ChatLockPrefs.setProtectedChats(context, list)
+                val next = ChatLockPrefs.protectedChats(context)
+                // Removing protection must not leave a session behind that
+                // would silently apply if the chat is added back later.
+                for (chat in previous - next) {
+                    ChatLockPrefs.clearSession(context, chat)
+                }
+                ChatAccessibilityService.requestScan()
+                result.success(null)
+            }
+            "clearChatLockSessions" -> {
+                ChatLockPrefs.clearAllSessions(context)
+                ChatLockCoordinator.recordStatus(
+                    if (ChatAccessibilityService.isConnected()) {
+                        ChatLockCoordinator.STATUS_SERVICE_CONNECTED
+                    } else {
+                        ChatLockCoordinator.STATUS_SERVICE_DISCONNECTED
+                    }
+                )
+                result.success(null)
+            }
             "getBiometricStatus" -> result.success(BiometricAuth.status(context))
             "setBiometricEnabled" -> {
                 LockPrefs.setBiometricEnabled(context, arguments == true)
@@ -394,6 +445,65 @@ object NativeBridge {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
     }
+
+    // ---- experimental Instagram Chat Lock ----
+    //
+    // The accessibility service is optional and off until the user explicitly
+    // enables it in Android Settings. Blue Lock can open that page but can
+    // never grant the permission itself, and it cannot disable another app's
+    // service either: revoking is always a user action in system settings.
+
+    private fun isInstagramInstalled(context: Context): Boolean =
+        try {
+            context.packageManager.getPackageInfo(ChatIdentity.INSTAGRAM_PACKAGE, 0)
+            true
+        } catch (_: PackageManager.NameNotFoundException) {
+            false
+        }
+
+    private fun instagramVersion(context: Context): String? =
+        try {
+            context.packageManager
+                .getPackageInfo(ChatIdentity.INSTAGRAM_PACKAGE, 0)
+                .versionName
+        } catch (_: PackageManager.NameNotFoundException) {
+            null
+        }
+
+    private fun isChatAccessibilityEnabled(context: Context): Boolean {
+        val expected = ComponentName(context, ChatAccessibilityService::class.java)
+        val raw = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        return raw.split(':')
+            .mapNotNull { ComponentName.unflattenFromString(it) }
+            .any { it == expected }
+    }
+
+    private fun openChatAccessibilitySettings(context: Context) {
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.w(TAG, "could not open accessibility settings", e)
+            openAppSettings(context)
+        }
+    }
+
+    private fun chatLockState(context: Context): Map<String, Any?> = mapOf(
+        "enabled" to ChatLockPrefs.enabled(context),
+        "relockTimeout" to ChatLockPrefs.relockTimeout(context),
+        "protectedChats" to ChatLockPrefs.protectedChats(context).sorted(),
+        "accessibilityEnabled" to isChatAccessibilityEnabled(context),
+        "serviceConnected" to ChatAccessibilityService.isConnected(),
+        "instagramInstalled" to isInstagramInstalled(context),
+        "instagramVersion" to instagramVersion(context),
+        "lastDetectedChat" to ChatLockCoordinator.lastDetectedUsername,
+        "lastDetectionStatus" to ChatLockCoordinator.lastDetectionStatus,
+        "lastDetectionAt" to ChatLockCoordinator.lastDetectionAt
+    )
 
     // ---- notification permission (Android 13+) ----
 

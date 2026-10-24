@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Blue Lock</string>
+    <string name="chat_accessibility_label">Blue Lock Chat Lock</string>
+    <string name="chat_accessibility_description">Blue Lock can show its authentication screen when a protected Instagram conversation is opened. It reads only the visible conversation header (a username-like identifier) from Instagram. It never reads, stores or sends message text, never takes screenshots, and never sends messages or taps Instagram controls. This is an experimental, best-effort feature that depends on Instagram\'s UI. You can turn it off and revoke this permission at any time in Android Settings.</string>
+</resources>

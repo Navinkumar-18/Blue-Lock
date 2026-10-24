@@ -37,6 +37,12 @@ class AppStorage {
   static const _kLockEnabled = 'lock_enabled';
   static const _kBiometricEnabled = 'biometric_enabled';
 
+  // Experimental Instagram Chat Lock. Only normalised usernames are stored;
+  // no message content, display names or Instagram credentials are persisted.
+  static const _kChatLockEnabled = 'chat_lock_enabled';
+  static const _kProtectedChats = 'chat_protected';
+  static const _kChatRelockTimeout = 'chat_relock_timeout_seconds';
+
   static const _kPinSalt = 'pin_salt';
   static const _kPinVerifier = 'pin_verifier';
 
@@ -333,6 +339,27 @@ class AppStorage {
 
   Future<void> setBiometricEnabled(bool value) =>
       prefs.setBool(_kBiometricEnabled, value);
+
+  // ---- Experimental Instagram Chat Lock ----
+
+  bool get chatLockEnabled => prefs.getBool(_kChatLockEnabled) ?? false;
+
+  Future<void> setChatLockEnabled(bool value) =>
+      prefs.setBool(_kChatLockEnabled, value);
+
+  /// Normalised Instagram usernames only. Never message content.
+  List<String> get protectedChats =>
+      (prefs.getStringList(_kProtectedChats) ?? const []).toList();
+
+  Future<void> setProtectedChats(List<String> chats) =>
+      prefs.setStringList(_kProtectedChats, chats);
+
+  /// 0 = relock immediately after leaving the conversation.
+  int get chatRelockTimeoutSeconds =>
+      prefs.getInt(_kChatRelockTimeout) ?? 0;
+
+  Future<void> setChatRelockTimeoutSeconds(int seconds) =>
+      prefs.setInt(_kChatRelockTimeout, seconds);
 
   // ---- secure helpers: in-memory fallback only when the platform channel
   // is absent (tests). Any real platform failure propagates. ----

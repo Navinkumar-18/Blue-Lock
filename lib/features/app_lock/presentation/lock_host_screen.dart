@@ -24,12 +24,17 @@ class LockHostScreen extends StatefulWidget {
     super.key,
     required this.controller,
     this.initialPackage,
+    this.initialChat,
   });
 
   final AppController controller;
 
   /// Package from the native initial route; null on the warm idle boot.
   final String? initialPackage;
+
+  /// Normalised Instagram username when the native route targets a specific
+  /// conversation rather than the whole app.
+  final String? initialChat;
 
   @override
   State<LockHostScreen> createState() => LockHostScreenState();
@@ -39,6 +44,7 @@ class LockHostScreenState extends State<LockHostScreen> {
   static const MethodChannel _channel = MethodChannel('com.bluelock.app/lock');
 
   String? _package;
+  String? _chat;
 
   /// Bumped on every show/clear so AppLockScreen fully remounts per session:
   /// while the engine is detached between lock activities no frames run, so
@@ -50,18 +56,29 @@ class LockHostScreenState extends State<LockHostScreen> {
   void initState() {
     super.initState();
     _package = widget.initialPackage;
-    PerfLog.mark('lock-host: initState pkg=${_package ?? '(idle)'}');
+    _chat = widget.initialChat;
+    PerfLog.mark(
+        'lock-host: initState pkg=${_package ?? '(idle)'} chat=${_chat != null}');
     _channel.setMethodCallHandler(_onMethodCall);
   }
 
   Future<dynamic> _onMethodCall(MethodCall call) async {
     switch (call.method) {
       case 'showLock':
-        final pkg = call.arguments as String?;
+        String? pkg;
+        String? chat;
+        final arguments = call.arguments;
+        if (arguments is String) {
+          pkg = arguments;
+        } else if (arguments is Map) {
+          pkg = arguments['package'] as String?;
+          chat = arguments['chat'] as String?;
+        }
         if (pkg != null && pkg.isNotEmpty && mounted) {
-          PerfLog.mark('lock-host: showLock $pkg');
+          PerfLog.mark('lock-host: showLock pkg=$pkg chat=${chat != null}');
           setState(() {
             _package = pkg;
+            _chat = chat;
             _generation++;
           });
         }
@@ -70,6 +87,7 @@ class LockHostScreenState extends State<LockHostScreen> {
           PerfLog.mark('lock-host: clearLock');
           setState(() {
             _package = null;
+            _chat = null;
             _generation++;
           });
         }
@@ -106,8 +124,9 @@ class LockHostScreenState extends State<LockHostScreen> {
     return PopScope(
       canPop: false,
       child: AppLockScreen(
-        key: ValueKey('$pkg#$_generation'),
+        key: ValueKey('$pkg#${_chat ?? ''}#$_generation'),
         packageName: pkg,
+        chatUsername: _chat,
         controller: widget.controller,
         nativeLock: true,
       ),

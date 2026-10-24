@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 
 import '../../features/app_lock/services/biometric_status.dart';
+import '../../features/chat_lock/models/chat_identity.dart';
+import '../../features/chat_lock/models/chat_lock_state.dart';
 import '../../features/installed_apps/models/installed_app.dart';
 import '../../features/installed_apps/services/apps_repository.dart';
 import '../../features/authentication/services/pin_service.dart';
@@ -48,6 +50,12 @@ class AppController extends ChangeNotifier {
     lockedPackages = storage.lockedPackages.toSet();
     relockTimeoutSeconds = storage.relockTimeoutSeconds;
     _lockEnabled = storage.lockEnabled;
+    _chatLockEnabled = storage.chatLockEnabled;
+    chatRelockTimeoutSeconds = storage.chatRelockTimeoutSeconds;
+    protectedChats = storage.protectedChats
+        .map(ChatIdentity.normalize)
+        .whereType<String>()
+        .toSet();
   }
 
   final AppStorage storage;
@@ -61,6 +69,14 @@ class AppController extends ChangeNotifier {
   int relockTimeoutSeconds = 0;
   bool _lockEnabled = true;
   bool onboardingDone = false;
+
+  // Experimental Instagram Chat Lock. The local settings are the source of
+  // truth; native mirrors them for the accessibility service. Only normalised
+  // usernames are kept - never display names or message content.
+  bool _chatLockEnabled = false;
+  int chatRelockTimeoutSeconds = 0;
+  Set<String> protectedChats = <String>{};
+  ChatLockState chatLockState = ChatLockState.unknown;
 
   List<InstalledApp> installedApps = const [];
   bool appsLoading = false;
@@ -76,6 +92,7 @@ class AppController extends ChangeNotifier {
 
   bool get lockEnabled => _lockEnabled;
   bool get hasPin => pinService.hasPinSync;
+  bool get chatLockEnabled => _chatLockEnabled;
 
   /// The selected lock method. Every authentication entry point reads this
   /// from the same [PinService], which loads it from the encrypted credential
@@ -112,9 +129,15 @@ class AppController extends ChangeNotifier {
     // service/activity recreation. The secure credential record remains the
     // source of truth; this is a one-way mirror of the type only.
     await native.setAuthType(authType);
+    // Mirror the experimental chat configuration to native storage so the
+    // accessibility service keeps working while Flutter is paused.
+    await native.setChatLockEnabled(_chatLockEnabled);
+    await native.setProtectedChats(protectedChats.toList());
+    await native.setChatRelockTimeout(chatRelockTimeoutSeconds);
     await refreshPermissions();
     await refreshBiometrics();
     await refreshSelfSession();
+    await refreshChatLockState();
   }
 
   /// Saves the initial credential and its authentication type.
@@ -251,6 +274,68 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     await storage.setRelockTimeoutSeconds(seconds);
     await native.setRelockTimeout(seconds);
+  }
+
+  // ---- experimental Instagram Chat Lock ----
+
+  Future<void> refreshChatLockState() async {
+    chatLockState = await native.getChatLockState();
+    notifyListeners();
+  }
+
+  Future<void> setChatLockEnabled(bool enabled) async {
+    _chatLockEnabled = enabled;
+    notifyListeners();
+    await storage.setChatLockEnabled(enabled);
+    await native.setChatLockEnabled(enabled);
+    await refreshChatLockState();
+  }
+
+  Future<void> setChatRelockTimeout(int seconds) async {
+    chatRelockTimeoutSeconds = seconds;
+    notifyListeners();
+    await storage.setChatRelockTimeoutSeconds(seconds);
+    await native.setChatRelockTimeout(seconds);
+    await refreshChatLockState();
+  }
+
+  /// Adds a normalised username. Returns a user-facing error, or null on
+  /// success. Display names are rejected by [ChatIdentity.normalize].
+  Future<String?> addProtectedChat(String rawUsername) async {
+    final id = ChatIdentity.normalize(rawUsername);
+    if (id == null) {
+      return 'Enter a valid Instagram username: letters, numbers, dots or '
+          'underscores, up to 30 characters.';
+    }
+    if (protectedChats.contains(id)) {
+      return '@$id is already protected.';
+    }
+    protectedChats = <String>{...protectedChats, id};
+    notifyListeners();
+    await storage.setProtectedChats(protectedChats.toList());
+    await native.setProtectedChats(protectedChats.toList());
+    await refreshChatLockState();
+    return null;
+  }
+
+  Future<void> removeProtectedChat(String username) async {
+    final id = ChatIdentity.normalize(username);
+    if (id == null || !protectedChats.contains(id)) return;
+    protectedChats = <String>{...protectedChats}..remove(id);
+    notifyListeners();
+    await storage.setProtectedChats(protectedChats.toList());
+    // Native clears the removed conversation's session as part of this call.
+    await native.setProtectedChats(protectedChats.toList());
+    await refreshChatLockState();
+  }
+
+  Future<void> openChatAccessibilitySettings() =>
+      native.openChatAccessibilitySettings();
+
+  /// Expires all conversation sessions without touching the protected list.
+  Future<void> clearChatLockSessions() async {
+    await native.clearChatLockSessions();
+    await refreshChatLockState();
   }
 
   Future<void> markOnboardingDone() async {

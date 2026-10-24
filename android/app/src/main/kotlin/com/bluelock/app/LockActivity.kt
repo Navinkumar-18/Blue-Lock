@@ -3,6 +3,7 @@ package com.bluelock.app
 import android.content.Context
 import android.content.Intent
 import android.app.KeyguardManager
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -39,6 +40,14 @@ class LockActivity : FlutterFragmentActivity() {
     var lockedPackage: String? = null
         private set
 
+    /**
+     * Normalised Instagram username when this instance is guarding one
+     * conversation instead of (or in addition to) the app-level gate.
+     */
+    @Volatile
+    var lockedChat: String? = null
+        private set
+
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /** elapsedRealtime of the service's launch trigger, if provided. */
@@ -59,11 +68,21 @@ class LockActivity : FlutterFragmentActivity() {
 
     override fun getInitialRoute(): String {
         val pkg = intent.getStringExtra(EXTRA_PACKAGE) ?: ""
+        // Never build a chat route from an unvalidated extra: if the value is
+        // not a usable username, fall back to the app-level lock route so the
+        // screen cannot get stuck after a successful verification.
+        val chat = ChatIdentity.normalize(intent.getStringExtra(EXTRA_CHAT))
         // Deliberately WITHOUT a leading slash: a "/lock/<pkg>" initial route
         // makes Navigator.defaultGenerateInitialRoutes split the name into
         // segments and also materialise "/" and "/lock" routes underneath the
         // lock screen. The Dart router in lib/app.dart matches "lock/<pkg>".
-        return "lock/$pkg"
+        return if (chat.isNullOrBlank()) {
+            "lock/$pkg"
+        } else {
+            // Usernames are already normalised to [a-z0-9._], but encode the
+            // query value so the contract stays safe if that ever changes.
+            "lock/$pkg?chat=${Uri.encode(chat)}"
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -74,15 +93,18 @@ class LockActivity : FlutterFragmentActivity() {
         )
         launchTriggerTime = intent.getLongExtra(EXTRA_LAUNCH_TIME, 0L)
         lockedPackage = intent.getStringExtra(EXTRA_PACKAGE)
+        lockedChat = ChatIdentity.normalize(intent.getStringExtra(EXTRA_CHAT))
         isShowing = true
         showingPackage = lockedPackage
+        showingChat = lockedChat
         launchPendingSince = 0L
         LockEngineCache.currentActivity = WeakReference(this)
         val cached = LockEngineCache.isReady
         Log.d(
             TAG,
             "onCreate: showing lock screen for $lockedPackage " +
-                "(cachedEngine=$cached recreated=${savedInstanceState != null})"
+                "(chat=${lockedChat != null} cachedEngine=$cached " +
+                "recreated=${savedInstanceState != null})"
         )
         super.onCreate(savedInstanceState)
         // The lock is not dismissible with Back. Without this, Back popped
@@ -98,7 +120,7 @@ class LockActivity : FlutterFragmentActivity() {
             // Warm path: the Dart lock host is already running on the cached
             // engine - push the protected package so the PIN screen replaces
             // the idle placeholder. Handler registered at warm time.
-            lockedPackage?.let { LockEngineCache.showLock(it) }
+            lockedPackage?.let { LockEngineCache.showLock(it, lockedChat) }
         }
         Log.i(
             TAG,
@@ -111,13 +133,16 @@ class LockActivity : FlutterFragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         val pkg = intent.getStringExtra(EXTRA_PACKAGE)
-        Log.d(TAG, "onNewIntent: pkg=$pkg current=$lockedPackage")
-        if (pkg != null && pkg != lockedPackage) {
+        val chat = ChatIdentity.normalize(intent.getStringExtra(EXTRA_CHAT))
+        Log.d(TAG, "onNewIntent: pkg=$pkg chat=${chat != null} current=$lockedPackage")
+        if (pkg != null && (pkg != lockedPackage || chat != lockedChat)) {
             lockedPackage = pkg
+            lockedChat = chat
             showingPackage = pkg
+            showingChat = chat
             if (LockEngineCache.isReady) {
                 // Retarget the running lock host without rebooting an engine.
-                LockEngineCache.showLock(pkg)
+                LockEngineCache.showLock(pkg, chat)
             } else {
                 // Cold engine: rebuild so the fresh boot uses the new route.
                 recreate()
@@ -143,6 +168,7 @@ class LockActivity : FlutterFragmentActivity() {
         BiometricAuth.abandon(this, "LockActivity destroyed")
         isShowing = false
         showingPackage = null
+        showingChat = null
         if (LockEngineCache.currentActivity?.get() === this) {
             LockEngineCache.currentActivity = null
             // Reset the cached engine's Dart host to its idle placeholder so
@@ -203,18 +229,17 @@ class LockActivity : FlutterFragmentActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "unlock" -> {
-                    val pkg = (call.arguments as? String) ?: lockedPackage
-                    if (pkg == null) {
-                        result.error("bad_args", "package required", null)
-                    } else {
-                        Log.d(TAG, "unlock accepted for $pkg - dismissing lock")
-                        LockPrefs.unlock(
-                            appContext,
-                            pkg,
-                            LockPrefs.relockTimeout(appContext)
-                        )
+                    val ok = applyUnlock(
+                        appContext,
+                        call.arguments,
+                        lockedPackage,
+                        lockedChat
+                    )
+                    if (ok) {
                         result.success(null)
                         mainHandler.post { finish() }
+                    } else {
+                        result.error("bad_args", "target required", null)
                     }
                 }
                 // There is deliberately no unauthenticated "reset" method.
@@ -278,6 +303,7 @@ class LockActivity : FlutterFragmentActivity() {
 
     companion object {
         const val EXTRA_PACKAGE = "package"
+        const val EXTRA_CHAT = "chat"
         const val EXTRA_LAUNCH_TIME = "launch_time"
         private const val TAG = "BlueLock"
 
@@ -290,6 +316,11 @@ class LockActivity : FlutterFragmentActivity() {
         var showingPackage: String? = null
             private set
 
+        /** Conversation username the current lock instance is guarding, if any. */
+        @Volatile
+        var showingChat: String? = null
+            private set
+
         /**
          * elapsedRealtime when the service last requested a lock launch and
          * the activity had not yet come up. Cleared in onCreate; lets the
@@ -298,5 +329,49 @@ class LockActivity : FlutterFragmentActivity() {
          */
         @Volatile
         var launchPendingSince: Long = 0L
+
+        /**
+         * Single completion path for both the warm cached-engine channel and
+         * the cold LockActivity channel. A chat target grants only that
+         * conversation's session; the app-level session is never inferred.
+         *
+         * Returns false when the request carries an unusable chat target, so
+         * the caller can reply with an error instead of dismissing the lock.
+         */
+        @Suppress("UNCHECKED_CAST")
+        fun applyUnlock(
+            context: Context,
+            arguments: Any?,
+            defaultPackage: String?,
+            defaultChat: String?
+        ): Boolean {
+            var pkg = defaultPackage
+            var rawChat = defaultChat
+            when (arguments) {
+                is String -> pkg = arguments
+                is Map<*, *> -> {
+                    pkg = (arguments["package"] as? String) ?: defaultPackage
+                    rawChat = (arguments["chat"] as? String) ?: defaultChat
+                }
+            }
+            if (pkg == null) return false
+            if (rawChat != null) {
+                val chat = ChatIdentity.normalize(rawChat) ?: return false
+                ChatLockPrefs.unlock(
+                    context,
+                    chat,
+                    ChatLockPrefs.relockTimeout(context)
+                )
+                Log.d(TAG, "chat unlock accepted - dismissing lock")
+            } else {
+                LockPrefs.unlock(
+                    context,
+                    pkg,
+                    LockPrefs.relockTimeout(context)
+                )
+                Log.d(TAG, "unlock accepted for $pkg - dismissing lock")
+            }
+            return true
+        }
     }
 }

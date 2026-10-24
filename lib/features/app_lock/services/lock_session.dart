@@ -32,6 +32,24 @@ class LockSession {
     }
   }
 
+  /// Ask native code to record a successful unlock for one Instagram
+  /// conversation. The app-level session is deliberately not granted here.
+  static Future<void> unlockChat({
+    required String packageName,
+    required String username,
+  }) async {
+    try {
+      await channel.invokeMethod('unlock', <String, String>{
+        'package': packageName,
+        'chat': username,
+      });
+    } on MissingPluginException {
+      // Running outside the lock activity (tests / preview).
+    } on PlatformException {
+      // Ignore - unlock recording is best-effort.
+    }
+  }
+
   /// Device biometric capability + user preference (via the lock channel).
   static Future<BiometricStatus> biometricStatus() async {
     try {

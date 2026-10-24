@@ -92,6 +92,9 @@ class AppLockService : Service() {
                 Intent.ACTION_SCREEN_OFF -> {
                     Log.d(TAG, "screen off: clearing foreground-only unlock sessions")
                     LockPrefs.clearForegroundOnlySessions(this@AppLockService)
+                    if (ChatLockPrefs.enabled(this@AppLockService)) {
+                        ChatLockCoordinator.onInstagramBackgrounded(this@AppLockService)
+                    }
                     lastForeground = null
                     LockPrefs.setLastForeground(this@AppLockService, null)
                     screenOn = false
@@ -443,6 +446,22 @@ class AppLockService : Service() {
                     Log.d(TAG, "immediate-relock: clearing session for $previous")
                     LockPrefs.clearSession(this, previous)
                 }
+            }
+
+            // Chat sessions follow the same foreground rule, but only an
+            // actual departure from Instagram may expire them. Opening the
+            // chat lock over Instagram is part of the authentication flow, so
+            // it must not expire the session it is about to grant, and the
+            // return from the lock screen to Instagram is not a departure
+            // either.
+            val leftInstagram =
+                previous == ChatIdentity.INSTAGRAM_PACKAGE &&
+                    fg != ChatIdentity.INSTAGRAM_PACKAGE
+            val isChatAuthFlow = fg == packageName &&
+                LockActivity.isShowing &&
+                LockActivity.showingChat != null
+            if (ChatLockPrefs.enabled(this) && leftInstagram && !isChatAuthFlow) {
+                ChatLockCoordinator.onInstagramBackgrounded(this)
             }
         }
 

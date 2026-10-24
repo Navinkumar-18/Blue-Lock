@@ -20,12 +20,17 @@ class AppLockScreen extends StatefulWidget {
     super.key,
     required this.packageName,
     required this.controller,
+    this.chatUsername,
     this.onUnlocked,
     this.nativeLock = false,
   });
 
   final String packageName;
   final AppController controller;
+
+  /// When non-null, this screen guards one Instagram conversation instead of
+  /// the whole app. The value is a normalised username, never a display name.
+  final String? chatUsername;
 
   /// Called after a successful unlock (when shown in-app as a preview).
   final VoidCallback? onUnlocked;
@@ -49,6 +54,11 @@ class _AppLockScreenState extends State<AppLockScreen> {
 
   AuthenticationType get _authType => widget.controller.pinService.authType;
   String get _noun => _authType.credentialNoun;
+  bool get _isChatLock =>
+      widget.chatUsername != null && widget.chatUsername!.isNotEmpty;
+  String get _targetLabel => _isChatLock
+      ? '@${widget.chatUsername}'
+      : (_app?.label ?? widget.packageName);
 
   /// Set after the platform reports a permanent biometric lockout: the
   /// biometric button would only fail until the device is unlocked with its
@@ -108,7 +118,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
     try {
       outcome = await LockSession.authenticateBiometric(
         packageName: widget.packageName,
-        label: _app?.label ?? widget.packageName,
+        label: _targetLabel,
       );
     } catch (_) {
       // Defensive: an unexpected bridge failure is treated like a failed
@@ -123,7 +133,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
     PerfLog.mark('lock: biometric outcome=$outcome');
     if (outcome == 'success') {
       _unlocked = true;
-      await LockSession.unlock(widget.packageName);
+      await _recordUnlock();
       widget.onUnlocked?.call();
       // Native LockActivity dismisses itself; in-app preview pops back.
       if (mounted && widget.onUnlocked != null) {
@@ -191,7 +201,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
     setState(() => _verifying = false);
     if (result.isSuccess) {
       _unlocked = true;
-      await LockSession.unlock(widget.packageName);
+      await _recordUnlock();
       widget.onUnlocked?.call();
       // When running inside the native LockActivity, native dismisses us.
       // In-app preview: pop back.
@@ -203,12 +213,27 @@ class _AppLockScreenState extends State<AppLockScreen> {
     }
   }
 
+  /// Records the successful authentication with the existing native session
+  /// primitives: a conversation session for chat lock, the app session
+  /// otherwise. Never called when verification failed or was cancelled.
+  Future<void> _recordUnlock() async {
+    final chat = widget.chatUsername;
+    if (chat != null && chat.isNotEmpty) {
+      await LockSession.unlockChat(
+        packageName: widget.packageName,
+        username: chat,
+      );
+    } else {
+      await LockSession.unlock(widget.packageName);
+    }
+  }
+
   /// Opens the verified recovery flow. Nothing is cleared here: the lock and
   /// the protected-app list stay intact unless recovery succeeds and the user
   /// configures a new credential.
   Future<void> _forgotPin() async {
     if (_verifying || _unlocked) return;
-    final label = _app?.label ?? widget.packageName;
+    final label = _targetLabel;
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => RecoveryScreen(
@@ -236,7 +261,12 @@ class _AppLockScreenState extends State<AppLockScreen> {
   @override
   Widget build(BuildContext context) {
     final app = _app;
-    final name = app?.label ?? widget.packageName;
+    final name = _targetLabel;
+    final heading = _isChatLock ? 'Conversation Locked' : 'App Locked';
+    final description = _isChatLock
+        ? 'This Instagram conversation is protected. '
+            '${_authType.verifyDescription}'
+        : _authType.verifyDescription;
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -298,8 +328,8 @@ class _AppLockScreenState extends State<AppLockScreen> {
                 CredentialEntryPanel(
                   key: _panelKey,
                   type: _authType,
-                  heading: 'App Locked',
-                  description: _authType.verifyDescription,
+                  heading: heading,
+                  description: description,
                   actionLabel: _verifying ? 'Checking...' : 'Unlock',
                   onCompleted: _onCredentialCompleted,
                   forgotLabel: _authType.forgotLabel,

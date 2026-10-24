@@ -67,6 +67,21 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="app_lock_privacy_monitoring" />
         </service>
+        <!-- Experimental Instagram Chat Lock detector. Disabled until the user
+             explicitly enables it in Android accessibility settings. It reads
+             only Instagram's visible header hierarchy; no message text. -->
+        <service
+            android:name=".ChatAccessibilityService"
+            android:exported="true"
+            android:label="@string/chat_accessibility_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/chat_accessibility_service" />
+        </service>
         <receiver
             android:name=".BootReceiver"
             android:exported="false">

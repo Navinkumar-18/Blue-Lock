@@ -91,6 +91,38 @@ void main() {
     expect(find.byType(AppLockScreen), findsNothing);
   });
 
+  testWidgets('cold boot with a chat route targets that conversation',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: LockHostScreen(
+        controller: controller,
+        initialPackage: pkg,
+        initialChat: 'jane_doe',
+      ),
+    ));
+    final screen = tester.widget<AppLockScreen>(find.byType(AppLockScreen));
+    expect(screen.chatUsername, 'jane_doe');
+    expect(find.text('@jane_doe'), findsOneWidget);
+    expect(find.text('Conversation Locked'), findsOneWidget);
+  });
+
+  testWidgets('warm showLock carries the conversation target',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: LockHostScreen(controller: controller),
+    ));
+    await sendLockChannel(tester, 'showLock', <String, String>{
+      'package': pkg,
+      'chat': 'john.doe',
+    });
+    final screen = tester.widget<AppLockScreen>(find.byType(AppLockScreen));
+    expect(screen.chatUsername, 'john.doe');
+    expect(find.text('@john.doe'), findsOneWidget);
+
+    await sendLockChannel(tester, 'clearLock');
+    expect(find.byType(AppLockScreen), findsNothing);
+  });
+
   testWidgets('repeated showLock remounts with fresh state per session',
       (tester) async {
     await tester.pumpWidget(MaterialApp(
